@@ -4,7 +4,9 @@ File upload → parse → extract (Claude) → reconcile → Excel output
 """
 import os
 import asyncio
+import base64
 import json
+import secrets
 import uuid
 from typing import Optional
 from pathlib import Path
@@ -12,7 +14,7 @@ from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import (
-    HTMLResponse, StreamingResponse, JSONResponse, FileResponse
+    HTMLResponse, StreamingResponse, JSONResponse, FileResponse, Response
 )
 from fastapi.staticfiles import StaticFiles
 
@@ -37,6 +39,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ─── Basic auth gate ───────────────────────────────────────────────────────────
+# Protects the whole app behind a shared username/password when APP_PASSWORD is
+# set (e.g. on the hosted instance). Left open when unset (local development).
+# /health is always open so platform health checks succeed.
+APP_USERNAME = os.environ.get("APP_USERNAME", "team")
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+
+
+@app.middleware("http")
+async def basic_auth(request: Request, call_next):
+    if not APP_PASSWORD or request.url.path == "/health":
+        return await call_next(request)
+
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Basic "):
+        try:
+            user, _, pw = base64.b64decode(header[6:]).decode("utf-8").partition(":")
+            if (secrets.compare_digest(user, APP_USERNAME)
+                    and secrets.compare_digest(pw, APP_PASSWORD)):
+                return await call_next(request)
+        except Exception:
+            pass
+
+    return Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="Irish Homes MTR Review"'},
+    )
 
 # In-memory job store (use Redis for multi-worker production)
 jobs: dict[str, dict] = {}

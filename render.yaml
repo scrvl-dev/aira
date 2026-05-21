@@ -8,5 +8,9 @@ services:
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false  # Set this in Render dashboard — never commit
+      - key: APP_USERNAME
+        sync: false  # Shared login for the team (e.g. "team")
+      - key: APP_PASSWORD
+        sync: false  # Shared password — set in Render dashboard, never commit
       - key: PYTHON_VERSION
         value: 3.11.0
