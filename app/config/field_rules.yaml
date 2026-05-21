@@ -1,0 +1,127 @@
+# Irish Homes MTR Batch Review — Field Rules
+# priority: CRITICAL / HIGH / MEDIUM
+# match_type: exact / fuzzy / numeric / count / informational
+# sources: which documents this field appears in
+# tolerance: for numeric fields, acceptable % difference before AMBER/RED
+
+fields:
+  - name: "Property Address"
+    priority: CRITICAL
+    match_type: fuzzy
+    fuzzy_threshold: 85
+    sources: [submission, valuation, survey, questionnaire, works]
+    
+  - name: "Eircode"
+    priority: CRITICAL
+    match_type: exact_normalized  # strips spaces, uppercase
+    sources: [submission, valuation, survey, questionnaire, works]
+    
+  - name: "Applicant Name"
+    priority: CRITICAL
+    match_type: fuzzy
+    fuzzy_threshold: 80
+    sources: [submission, valuation, questionnaire]
+    note: "Survey 'prepared_for' may differ — flag if not borrower name"
+    
+  - name: "Folio Number"
+    priority: CRITICAL
+    match_type: exact
+    sources: [submission, survey]
+    amber_if_missing_from: [valuation, questionnaire]
+    
+  - name: "Number of Bedrooms"
+    priority: CRITICAL
+    match_type: exact
+    sources: [submission, valuation, survey, questionnaire]
+    
+  - name: "Property Type"
+    priority: HIGH
+    match_type: fuzzy
+    fuzzy_threshold: 75
+    sources: [submission, valuation, survey, questionnaire]
+    
+  - name: "Open Market Value"
+    priority: CRITICAL
+    match_type: numeric
+    tolerance_amber: 0.02   # 2% difference = AMBER
+    tolerance_red: 0.05     # 5% difference = RED
+    sources: [submission, valuation]
+    
+  - name: "Monthly Rental"
+    priority: CRITICAL
+    match_type: numeric
+    tolerance_amber: 0.02
+    tolerance_red: 0.05
+    sources: [submission, valuation]
+    
+  - name: "Condition Rating"
+    priority: HIGH
+    match_type: internal_consistency  # check survey executive vs ranking
+    sources: [survey]
+    
+  - name: "Household Composition"
+    priority: HIGH
+    match_type: fuzzy
+    fuzzy_threshold: 70
+    sources: [submission, questionnaire]
+    
+  - name: "Both Borrowers MTR"
+    priority: HIGH
+    match_type: exact_normalized
+    sources: [submission, questionnaire]
+    
+  - name: "Consent to Sale"
+    priority: HIGH
+    match_type: exact_normalized
+    sources: [submission, questionnaire]
+    
+  - name: "Works Items Count"
+    priority: HIGH
+    match_type: count
+    sources: [survey, works]
+    
+  - name: "Fire Safety Issues"
+    priority: HIGH
+    match_type: presence
+    sources: [survey, works]
+    note: "Flag if fire safety issues exist but not noted in submission"
+    
+  - name: "Non-Residing Borrower"
+    priority: MEDIUM
+    match_type: presence
+    sources: [submission, questionnaire]
+    
+  - name: "Planning Extensions"
+    priority: MEDIUM
+    match_type: exact_normalized
+    sources: [questionnaire]
+    
+  - name: "Flooding Risk"
+    priority: MEDIUM
+    match_type: exact_normalized
+    sources: [questionnaire]
+    
+  - name: "Pyrite"
+    priority: MEDIUM
+    match_type: exact_normalized
+    sources: [questionnaire]
+
+# RAG rules
+rag_rules:
+  RED:
+    - "Critical field value conflict between two or more sources"
+    - "Internal document inconsistency on critical field"
+    - "Prepared-for name doesn't match applicant name on survey"
+    - "Works count mismatch between survey and list of works"
+    - "Numeric value exceeds tolerance_red threshold"
+    
+  AMBER:
+    - "Minor formatting difference (normalises to same value)"
+    - "Field present in some sources but missing from others"
+    - "Numeric value within tolerance_amber threshold"
+    - "Non-critical field conflict"
+    
+  GREEN:
+    - "All sources agree (after normalisation)"
+    - "Single-source field with valid value present"
+    - "Not applicable field confirmed absent from all relevant sources"

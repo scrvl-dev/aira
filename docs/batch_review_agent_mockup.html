@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Irish Homes — MTR Batch Review Agent</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg: #0c0f0e;
+    --surface: #141918;
+    --surface2: #1c2320;
+    --border: #2a3330;
+    --green: #22c55e;
+    --green-dim: #166534;
+    --amber: #f59e0b;
+    --amber-dim: #92400e;
+    --red: #ef4444;
+    --red-dim: #7f1d1d;
+    --blue: #3b82f6;
+    --text: #e5ede8;
+    --text-muted: #6b7c74;
+    --text-dim: #4a5c54;
+    --accent: #22c55e;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* TOP HEADER */
+  .topbar {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  .topbar-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--text-muted); }
+  .batch-tag {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .topbar-stats {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+  }
+  .stat-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+  }
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-green { background: var(--green); }
+  .dot-amber { background: var(--amber); }
+  .dot-red { background: var(--red); }
+
+  /* LAYOUT */
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    height: calc(100vh - 49px);
+  }
+
+  /* LEFT PANEL */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    padding: 16px 0;
+  }
+  .sidebar-section {
+    padding: 0 16px;
+    margin-bottom: 24px;
+  }
+  .sidebar-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+    padding: 0 4px;
+  }
+  .property-item {
+    padding: 10px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2px;
+  }
+  .property-item:hover { background: var(--surface2); }
+  .property-item.active { background: var(--surface2); border-left: 2px solid var(--accent); padding-left: 10px; }
+  .prop-name {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 160px;
+  }
+  .prop-sub {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 1px;
+  }
+  .status-badge {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 3px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+  .badge-red { background: var(--red-dim); color: var(--red); }
+  .badge-amber { background: var(--amber-dim); color: var(--amber); }
+  .badge-green { background: var(--green-dim); color: var(--green); }
+  .badge-pending { background: var(--surface2); color: var(--text-dim); }
+
+  /* MAIN PANEL */
+  .main {
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* PROPERTY HEADER */
+  .prop-header {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: start;
+    gap: 16px;
+  }
+  .prop-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .prop-meta {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .meta-item {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .meta-item strong { color: var(--text); }
+  .overall-status {
+    text-align: right;
+  }
+  .overall-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .overall-badge {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 5px;
+    display: inline-block;
+  }
+
+  /* DOC STATUS ROW */
+  .doc-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+  }
+  .doc-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .doc-type {
+    font-family: var(--mono);
+    font-size: 8px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+  }
+  .doc-name {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .doc-status-row {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .doc-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+  }
+  .doc-issues {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  /* CONTROL SHEET */
+  .section-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .control-table {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .ct-header {
+    display: grid;
+    grid-template-columns: 180px 1fr 1fr 1fr 1fr 1fr 80px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 16px;
+    gap: 8px;
+  }
+  .ct-col {
+    font-family: var(--mono);
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .ct-row {
+    display: grid;
+    grid-template-columns: 180px 1fr 1fr 1fr 1fr 1fr 80px;
+    border-bottom: 1px solid var(--border);
+    padding: 9px 16px;
+    gap: 8px;
+    align-items: start;
+    transition: background 0.1s;
+  }
+  .ct-row:last-child { border-bottom: none; }
+  .ct-row:hover { background: var(--surface2); }
+  .ct-field {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .ct-field-sub {
+    font-size: 9px;
+    color: var(--text-dim);
+    margin-top: 1px;
+    font-family: var(--mono);
+  }
+  .ct-value {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    word-break: break-word;
+  }
+  .ct-value.match { color: var(--green); }
+  .ct-value.conflict { color: var(--red); }
+  .ct-value.missing { color: var(--text-dim); font-style: italic; }
+  .ct-value.minor { color: var(--amber); }
+
+  .rag {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 3px 7px;
+    border-radius: 3px;
+    text-align: center;
+    display: inline-block;
+  }
+  .rag-G { background: var(--green-dim); color: var(--green); }
+  .rag-A { background: var(--amber-dim); color: var(--amber); }
+  .rag-R { background: var(--red-dim); color: var(--red); }
+
+  /* WORKS SECTION */
+  .works-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .work-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .work-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    padding-top: 1px;
+  }
+  .work-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .work-match {
+    font-family: var(--mono);
+    font-size: 8px;
+    color: var(--green);
+    margin-top: 4px;
+  }
+
+  /* ISSUES PANEL */
+  .issues-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .issue-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .issue-sev {
+    font-family: var(--mono);
+    font-size: 8px;
+    font-weight: 600;
+    padding: 3px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .issue-body { flex: 1; }
+  .issue-title { font-size: 12px; font-weight: 500; color: var(--text); margin-bottom: 3px; }
+  .issue-desc { font-size: 11px; color: var(--text-muted); }
+  .issue-source {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-dim);
+    margin-top: 5px;
+  }
+
+  /* FOOTER */
+  .footer-note {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 20px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .footer-note a { color: var(--accent); text-decoration: none; }
+
+  /* ARCH PANEL */
+  .arch-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+  }
+  .arch-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .arch-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+  }
+  .arch-card-title {
+    font-family: var(--mono);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+  .arch-item {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .arch-item:last-child { border-bottom: none; }
+  .arch-tag {
+    font-family: var(--mono);
+    font-size: 8px;
+    background: var(--surface2);
+    padding: 1px 5px;
+    border-radius: 2px;
+    color: var(--text-dim);
+  }
+
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+  }
+  .flow-node {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 6px 12px;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text-muted);
+  }
+  .flow-node.source { border-color: var(--blue); color: var(--blue); }
+  .flow-node.process { border-color: var(--accent); color: var(--accent); }
+  .flow-node.output { border-color: var(--amber); color: var(--amber); }
+  .flow-arrow { color: var(--text-dim); font-size: 14px; }
+
+  /* TABS */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+  }
+  .tab {
+    padding: 8px 14px;
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--text-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .tab:hover { color: var(--text-muted); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Agent run button */
+  .run-btn {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 5px;
+    padding: 8px 16px;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .run-btn:hover { opacity: 0.85; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-left">
+    <div class="logo">Irish Homes <span>/</span> MTR Batch Review</div>
+    <div class="batch-tag">BATCH-2026-05 · 1 property loaded · Pepper Lender</div>
+  </div>
+  <div class="topbar-stats">
+    <div class="stat-pill"><span class="dot dot-green"></span>7 GREEN</div>
+    <div class="stat-pill"><span class="dot dot-amber"></span>4 AMBER</div>
+    <div class="stat-pill"><span class="dot dot-red"></span>4 RED</div>
+    <button class="run-btn">▶ Run Full Batch</button>
+  </div>
+</div>
+
+<div class="layout">
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-label">Properties</div>
+      <div class="property-item active">
+        <div>
+          <div class="prop-name">9 The View, Newbridge</div>
+          <div class="prop-sub">Barry Kavanagh · KE51682F</div>
+        </div>
+        <span class="status-badge badge-red">4 RED</span>
+      </div>
+      <div class="property-item">
+        <div>
+          <div class="prop-name">14 Oak Drive, Kildare</div>
+          <div class="prop-sub">Maria Brennan · KE44213A</div>
+        </div>
+        <span class="status-badge badge-pending">PENDING</span>
+      </div>
+      <div class="property-item">
+        <div>
+          <div class="prop-name">3 Clover Close, Naas</div>
+          <div class="prop-sub">John Murphy · KE88721C</div>
+        </div>
+        <span class="status-badge badge-pending">PENDING</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Batch Summary</div>
+      <div style="background: var(--surface2); border-radius: 6px; padding: 12px; font-size: 11px; color: var(--text-muted); line-height: 1.8;">
+        <div>Lender: <strong style="color:var(--text)">Pepper</strong></div>
+        <div>Batch date: <strong style="color:var(--text)">May 2026</strong></div>
+        <div>Total properties: <strong style="color:var(--text)">3</strong></div>
+        <div>Reviewed: <strong style="color:var(--text)">1 / 3</strong></div>
+        <div>Docs per case: <strong style="color:var(--text)">5</strong></div>
+        <div>Total doc touches: <strong style="color:var(--text)">15</strong></div>
+        <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);">
+          <span style="color:var(--red)">4 cases need review</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Documents</div>
+      <div style="font-size: 10px; color: var(--text-muted); line-height: 2;">
+        <div style="display:flex; justify-content:space-between;"><span>📄 Submission Sheet</span><span style="color:var(--green); font-family:var(--mono)">✓</span></div>
+        <div style="display:flex; justify-content:space-between;"><span>📊 List of Works</span><span style="color:var(--green); font-family:var(--mono)">✓</span></div>
+        <div style="display:flex; justify-content:space-between;"><span>📋 Condition Survey</span><span style="color:var(--green); font-family:var(--mono)">✓</span></div>
+        <div style="display:flex; justify-content:space-between;"><span>📋 Property Q'aire</span><span style="color:var(--green); font-family:var(--mono)">✓</span></div>
+        <div style="display:flex; justify-content:space-between;"><span>📄 Valuation</span><span style="color:var(--green); font-family:var(--mono)">✓</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MAIN -->
+  <div class="main">
+
+    <!-- PROPERTY HEADER -->
+    <div class="prop-header">
+      <div>
+        <div class="prop-title">9 The View, Walshestown Park, Newbridge, Co. Kildare, W12 C966</div>
+        <div class="prop-meta">
+          <div class="meta-item">Applicant: <strong>Barry Kavanagh</strong></div>
+          <div class="meta-item">Folio: <strong>KE51682F</strong></div>
+          <div class="meta-item">Lender: <strong>Pepper</strong></div>
+          <div class="meta-item">Type: <strong>Semi-Detached</strong></div>
+          <div class="meta-item">Beds: <strong>4</strong></div>
+          <div class="meta-item">OMV: <strong>€405,000</strong></div>
+          <div class="meta-item">Rent: <strong>€2,650/mo</strong></div>
+        </div>
+      </div>
+      <div class="overall-status">
+        <div class="overall-label">Overall Status</div>
+        <span class="overall-badge badge-red" style="font-size:12px; padding: 8px 16px;">⚠ REVIEW REQUIRED</span>
+        <div style="font-size:10px; color:var(--text-dim); margin-top:5px; font-family:var(--mono)">4 RED · 4 AMBER · 7 GREEN</div>
+      </div>
+    </div>
+
+    <!-- TABS -->
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('control')">Control Sheet</div>
+      <div class="tab" onclick="switchTab('works')">Works Reconciliation (24)</div>
+      <div class="tab" onclick="switchTab('issues')">Issues Log (8)</div>
+      <div class="tab" onclick="switchTab('arch')">Agent Architecture</div>
+    </div>
+
+    <!-- TAB: CONTROL SHEET -->
+    <div class="tab-panel active" id="tab-control">
+
+      <div class="doc-row">
+        <div class="doc-card">
+          <div class="doc-type">Doc 1 · Excel</div>
+          <div class="doc-name">Submission Sheet</div>
+          <div class="doc-status-row"><span class="doc-dot" style="background:var(--green)"></span><span class="doc-issues">Master source — 32 fields</span></div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-type">Doc 2 · Excel</div>
+          <div class="doc-name">List of Works</div>
+          <div class="doc-status-row"><span class="doc-dot" style="background:var(--green)"></span><span class="doc-issues">24 items — matches survey</span></div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-type">Doc 3 · PDF</div>
+          <div class="doc-name">Condition Survey</div>
+          <div class="doc-status-row"><span class="doc-dot" style="background:var(--red)"></span><span class="doc-issues">2 RED flags internal</span></div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-type">Doc 4 · PDF</div>
+          <div class="doc-name">Property Questionnaire</div>
+          <div class="doc-status-row"><span class="doc-dot" style="background:var(--red)"></span><span class="doc-issues">3 conflicts vs submission</span></div>
+        </div>
+        <div class="doc-card">
+          <div class="doc-type">Doc 5 · PDF</div>
+          <div class="doc-name">Valuation Report</div>
+          <div class="doc-status-row"><span class="doc-dot" style="background:var(--amber)"></span><span class="doc-issues">OMV matches, folio absent</span></div>
+        </div>
+      </div>
+
+      <div style="margin-top: 16px;">
+        <div class="section-title">Field Reconciliation</div>
+        <div class="control-table">
+          <div class="ct-header">
+            <div class="ct-col">Field</div>
+            <div class="ct-col">Submission Sheet</div>
+            <div class="ct-col">Valuation</div>
+            <div class="ct-col">Cond. Survey</div>
+            <div class="ct-col">Questionnaire</div>
+            <div class="ct-col">List of Works</div>
+            <div class="ct-col">RAG</div>
+          </div>
+
+          <!-- ADDRESS -->
+          <div class="ct-row">
+            <div><div class="ct-field">Property Address</div><div class="ct-field-sub">CRITICAL</div></div>
+            <div class="ct-value match">9 The View, Walshestown Park, Newbridge, Co. Kildare, W12 C966</div>
+            <div class="ct-value match">9 The View, Walshestown Park, Newbridge</div>
+            <div class="ct-value match">09 The View, Walshestown Park, Newbridge, Co. Kildare</div>
+            <div class="ct-value match">9 The View, Walshestown Park, Newbridge, Co. Kildare</div>
+            <div class="ct-value match">09 The View, Walshestown Park, Newbridge, Co. Kildare, W12 C966</div>
+            <div><span class="rag rag-G">GREEN</span></div>
+          </div>
+
+          <!-- EIRCODE -->
+          <div class="ct-row">
+            <div><div class="ct-field">Eircode</div><div class="ct-field-sub">CRITICAL</div></div>
+            <div class="ct-value match">W12 C966</div>
+            <div class="ct-value match">W12 C966</div>
+            <div class="ct-value match">W12 C966</div>
+            <div class="ct-value minor">W12C966 (no space)</div>
+            <div class="ct-value match">W12 C966</div>
+            <div><span class="rag rag-A">AMBER</span></div>
+          </div>
+
+          <!-- APPLICANT NAME -->
+          <div class="ct-row">
+            <div><div class="ct-field">Applicant Name</div><div class="ct-field-sub">CRITICAL</div></div>
+            <div class="ct-value match">Barry Kavanagh</div>
+            <div class="ct-value match">Barry Kavanagh</div>
+            <div class="ct-value conflict">Manustin Holdings Ltd.</div>
+            <div class="ct-value match">Barry Kavanagh</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-R">RED</span></div>
+          </div>
+
+          <!-- FOLIO -->
+          <div class="ct-row">
+            <div><div class="ct-field">Folio Number</div><div class="ct-field-sub">CRITICAL</div></div>
+            <div class="ct-value match">KE51682F</div>
+            <div class="ct-value missing">Not stated</div>
+            <div class="ct-value match">KE51682F</div>
+            <div class="ct-value missing">Not stated</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-A">AMBER</span></div>
+          </div>
+
+          <!-- BEDROOMS -->
+          <div class="ct-row">
+            <div><div class="ct-field">Bedrooms</div><div class="ct-field-sub">CRITICAL</div></div>
+            <div class="ct-value match">4</div>
+            <div class="ct-value match">4</div>
+            <div class="ct-value match">4</div>
+            <div class="ct-value match">4</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-G">GREEN</span></div>
+          </div>
+
+          <!-- PROPERTY TYPE -->
+          <div class="ct-row">
+            <div><div class="ct-field">Property Type</div><div class="ct-field-sub">HIGH</div></div>
+            <div class="ct-value match">Semi-Detached</div>
+            <div class="ct-value match">Semi-Detached</div>
+            <div class="ct-value match">Semi-Detached</div>
+            <div class="ct-value match">Semi-Detached (ticked)</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-G">GREEN</span></div>
+          </div>
+
+          <!-- OMV -->
+          <div class="ct-row">
+            <div><div class="ct-field">Open Market Value</div><div class="ct-field-sub">CRITICAL</div></div>
+            <div class="ct-value match">€405,000</div>
+            <div class="ct-value match">€405,000</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-G">GREEN</span></div>
+          </div>
+
+          <!-- RENTAL -->
+          <div class="ct-row">
+            <div><div class="ct-field">Monthly Rental</div><div class="ct-field-sub">CRITICAL</div></div>
+            <div class="ct-value match">€2,650</div>
+            <div class="ct-value match">€2,650</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-G">GREEN</span></div>
+          </div>
+
+          <!-- CONDITION RATING - INTERNAL CONFLICT -->
+          <div class="ct-row">
+            <div><div class="ct-field">Condition Rating</div><div class="ct-field-sub">HIGH</div></div>
+            <div class="ct-value missing">Not stated</div>
+            <div class="ct-value minor">Fair (no score)</div>
+            <div class="ct-value conflict">Exec: 4 / Ranking: 3 ⚠</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-R">RED</span></div>
+          </div>
+
+          <!-- HOUSEHOLD COMPOSITION -->
+          <div class="ct-row">
+            <div><div class="ct-field">Household Composition</div><div class="ct-field-sub">MEDIUM</div></div>
+            <div class="ct-value match">2 Adults, 0 Dependants</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value conflict">1 Adult + 1 Dependent</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-R">RED</span></div>
+          </div>
+
+          <!-- BOTH BORROWERS MTR -->
+          <div class="ct-row">
+            <div><div class="ct-field">Both Borrowers MTR</div><div class="ct-field-sub">HIGH</div></div>
+            <div class="ct-value match">No</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value match">No</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-G">GREEN</span></div>
+          </div>
+
+          <!-- CONSENT TO SALE -->
+          <div class="ct-row">
+            <div><div class="ct-field">Consent to Sale</div><div class="ct-field-sub">HIGH</div></div>
+            <div class="ct-value match">Yes</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value match">Yes</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-G">GREEN</span></div>
+          </div>
+
+          <!-- NON-RESIDING BORROWER -->
+          <div class="ct-row">
+            <div><div class="ct-field">Non-Residing Borrower</div><div class="ct-field-sub">HIGH</div></div>
+            <div class="ct-value match">Nicola Kavanagh</div>
+            <div class="ct-value missing">Not stated</div>
+            <div class="ct-value missing">Not stated</div>
+            <div class="ct-value missing">Not stated</div>
+            <div class="ct-value missing">n/a</div>
+            <div><span class="rag rag-A">AMBER</span></div>
+          </div>
+
+          <!-- WORKS COUNT -->
+          <div class="ct-row">
+            <div><div class="ct-field">Works Items Count</div><div class="ct-field-sub">HIGH</div></div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value match">24 items</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value match">24 items</div>
+            <div><span class="rag rag-G">GREEN</span></div>
+          </div>
+
+          <!-- FIRE SAFETY -->
+          <div class="ct-row">
+            <div><div class="ct-field">Fire Safety Audit Required</div><div class="ct-field-sub">HIGH</div></div>
+            <div class="ct-value missing">Not stated</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value conflict">YES — party wall issue</div>
+            <div class="ct-value missing">n/a</div>
+            <div class="ct-value match">YES — item 2</div>
+            <div><span class="rag rag-R">RED</span></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB: WORKS -->
+    <div class="tab-panel" id="tab-works">
+      <div class="section-title">24 Works Items — Condition Survey vs List of Works</div>
+      <div style="background:var(--green-dim); border:1px solid var(--green); border-radius:6px; padding:10px 16px; margin-bottom:14px; font-size:11px; color:var(--green); font-family:var(--mono);">
+        ✓ ALL 24 WORKS ITEMS MATCH — Condition Survey and List of Works are in full agreement
+      </div>
+      <div class="works-grid">
+        <div class="work-item"><div class="work-num">#01</div><div><div class="work-text">Electrical inspection, certification, and all outstanding repairs.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#02</div><div><div class="work-text">Fire safety audit of timber framed party wall — firestopping into eaves box required.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#03</div><div><div class="work-text">Roofing contractor to inspect slopes and refit lifted tiles.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#04</div><div><div class="work-text">Clean gutters, downpipes and gullies; fit lids to all gullies.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#05</div><div><div class="work-text">External vent covers — replace missing/damaged and refit loose covers.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#06</div><div><div class="work-text">Clean chimney and conduct camera survey of flue liners.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#07</div><div><div class="work-text">Full window service — handles, hinges, keyless locks for bedrooms, first-floor restrictors.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#08</div><div><div class="work-text">Service rear French doors.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#09</div><div><div class="work-text">Service internal doors; new handles to ensuite door.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#10</div><div><div class="work-text">Repair delaminating ceiling paint — ensuite, kitchen, utility, rear bedroom.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#11</div><div><div class="work-text">Insulate water tanks including header tanks and lids.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#12</div><div><div class="work-text">Install timber platform for attic water tank access.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#13</div><div><div class="work-text">Replace torn/detached attic vent ducting; insulate duct runs.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#14</div><div><div class="work-text">Service kitchen presses and drawers; replace delaminating door.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#15</div><div><div class="work-text">Provide stamped tempered glass bath screen; remove bath curtain.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#16</div><div><div class="work-text">Jet clean drains — standing water present.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#17</div><div><div class="work-text">Full plumbing inspection — all installations, hot water cylinder service.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#18</div><div><div class="work-text">Gas boiler service — heating controls, power flush, pressure test, certification, plume kit.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#19</div><div><div class="work-text">Replace mechanical vents bathroom/ensuite; new vents utility/WC with humidistats.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#20</div><div><div class="work-text">Adjustable vent covers to wall vents; ensure sleeved in plastic piping.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#21</div><div><div class="work-text">Replace bathroom/ensuite lights with IP65 rated fittings; check moisture resistance.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#22</div><div><div class="work-text">Interlinked smoke alarms to all required rooms; heat detectors to kitchen/living room (IS3218 2024).</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#23</div><div><div class="work-text">New fire blanket to kitchen.</div><div class="work-match">✓ Matched in both docs</div></div></div>
+        <div class="work-item"><div class="work-num">#24</div><div><div class="work-text">CO alarms to living room, utility room, and landing (within 5m of bedroom doors).</div><div class="work-match">✓ Matched in both docs</div></div></div>
+      </div>
+    </div>
+
+    <!-- TAB: ISSUES -->
+    <div class="tab-panel" id="tab-issues">
+      <div class="section-title">Issues Requiring Human Review</div>
+      <div class="issues-list">
+
+        <div class="issue-item">
+          <span class="issue-sev badge-red">RED</span>
+          <div class="issue-body">
+            <div class="issue-title">Condition Survey prepared for wrong entity</div>
+            <div class="issue-desc">Condition Survey names <strong>"Manustin Holdings Ltd."</strong> as client. All other documents reference <strong>Barry Kavanagh</strong> as the applicant. This needs to be resolved before submission — either the survey was prepared for a different party or the survey needs re-issuing.</div>
+            <div class="issue-source">SOURCE: Condition Survey p.1 vs Submission Sheet Q4 vs Questionnaire applicant name</div>
+          </div>
+        </div>
+
+        <div class="issue-item">
+          <span class="issue-sev badge-red">RED</span>
+          <div class="issue-body">
+            <div class="issue-title">Internal condition rating discrepancy within same report</div>
+            <div class="issue-desc">The executive summary states <strong>condition rating 4</strong> ("Very Good — Minor works required"), but the signed ranking section on the final page gives it <strong>rating 3</strong> ("Satisfactory — Some works required"). These two ratings directly contradict each other within the same document.</div>
+            <div class="issue-source">SOURCE: Condition Survey — Executive Summary p.3 vs Ranking Section p.11</div>
+          </div>
+        </div>
+
+        <div class="issue-item">
+          <span class="issue-sev badge-red">RED</span>
+          <div class="issue-body">
+            <div class="issue-title">Household composition mismatch</div>
+            <div class="issue-desc">Submission Sheet states <strong>2 Adults, 0 Dependants</strong>. Property Questionnaire states <strong>1 Adult (age 53, Male — Applicant) + 1 Dependent (age 23, Female — Daughter)</strong>. This is a factual conflict on a key MTR eligibility field that affects over-accommodation assessment.</div>
+            <div class="issue-source">SOURCE: Submission Sheet Q17/Q19/Q20 vs Questionnaire Q3 occupant table</div>
+          </div>
+        </div>
+
+        <div class="issue-item">
+          <span class="issue-sev badge-red">RED</span>
+          <div class="issue-body">
+            <div class="issue-title">Fire safety — timber frame party wall — urgent action item</div>
+            <div class="issue-desc">Condition Survey identifies that timbers pass through the top of the party wall and firestopping does not continue into the eaves box. A formal fire safety audit is required. This is listed as <strong>Item 2</strong> in the works list and flagged in the survey narrative — but the Submission Sheet contains no reference to this outstanding issue.</div>
+            <div class="issue-source">SOURCE: Condition Survey Fire Safety section + List of Works Item 2</div>
+          </div>
+        </div>
+
+        <div class="issue-item">
+          <span class="issue-sev badge-amber">AMBER</span>
+          <div class="issue-body">
+            <div class="issue-title">Eircode formatting inconsistency</div>
+            <div class="issue-desc">Property Questionnaire records eircode as <strong>W12C966</strong> (no space). All other documents correctly record <strong>W12 C966</strong>. Substantively the same but will fail automated string matching in any downstream system.</div>
+            <div class="issue-source">SOURCE: Questionnaire page 1 vs all other documents</div>
+          </div>
+        </div>
+
+        <div class="issue-item">
+          <span class="issue-sev badge-amber">AMBER</span>
+          <div class="issue-body">
+            <div class="issue-title">Folio number absent from Valuation Report</div>
+            <div class="issue-desc">Folio KE51682F is confirmed in the Condition Survey and Submission Sheet. The Valuation Report (BV Real Estate) makes no reference to the folio number, meaning no title linkage can be confirmed from the valuation alone.</div>
+            <div class="issue-source">SOURCE: Valuation Report p.1–5 (no folio reference)</div>
+          </div>
+        </div>
+
+        <div class="issue-item">
+          <span class="issue-sev badge-amber">AMBER</span>
+          <div class="issue-body">
+            <div class="issue-title">Non-residing borrower Nicola Kavanagh absent from most documents</div>
+            <div class="issue-desc">Submission Sheet Q6 names <strong>Nicola Kavanagh</strong> as a non-residing borrower. Questionnaire Q12 also references her as having an equitable interest. However she appears in no other document. Her formal consent position should be documented.</div>
+            <div class="issue-source">SOURCE: Submission Sheet Q6 + Questionnaire Q12</div>
+          </div>
+        </div>
+
+        <div class="issue-item">
+          <span class="issue-sev badge-amber">AMBER</span>
+          <div class="issue-body">
+            <div class="issue-title">Property not yet taken in charge by local authority</div>
+            <div class="issue-desc">Questionnaire Q16c confirms the development <strong>has not been taken in charge by the local authority</strong> (KCC maintains estate). This is standard for newer developments but should be noted in submission documents as it may affect the COT process.</div>
+            <div class="issue-source">SOURCE: Questionnaire Q16c — "No" / Q17 — maintained by KCC</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- TAB: ARCHITECTURE -->
+    <div class="tab-panel" id="tab-arch">
+      <div class="arch-section">
+        <div style="font-size:13px; font-weight:600; margin-bottom:4px;">Agent Architecture — Irish Homes MTR Batch Review</div>
+        <div style="font-size:11px; color:var(--text-muted); margin-bottom:16px;">Claude Code agent stack. Each property folder → 5 documents → extracted fields → reconciliation → control sheet output.</div>
+
+        <div class="flow-row">
+          <span class="flow-node source">📁 Property Folder</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-node source">📄 PDF Parser (pdfplumber)</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-node process">🤖 Claude Field Extraction</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-node process">⚖️ Reconciler</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-node output">📊 Control Sheet (xlsx)</span>
+          <span class="flow-arrow">→</span>
+          <span class="flow-node output">🔔 GHL Webhook (if RED)</span>
+        </div>
+
+        <div class="arch-grid">
+          <div class="arch-card">
+            <div class="arch-card-title">Document Parsers</div>
+            <div class="arch-item">pdfplumber <span class="arch-tag">PDF extraction</span></div>
+            <div class="arch-item">PyMuPDF (fitz) <span class="arch-tag">layout-aware PDF</span></div>
+            <div class="arch-item">openpyxl <span class="arch-tag">Excel read/write</span></div>
+            <div class="arch-item">python-docx <span class="arch-tag">Word docs</span></div>
+            <div class="arch-item">pandas <span class="arch-tag">data processing</span></div>
+          </div>
+          <div class="arch-card">
+            <div class="arch-card-title">Claude API Layer</div>
+            <div class="arch-item">anthropic-sdk-python <span class="arch-tag">core</span></div>
+            <div class="arch-item">claude-sonnet-4 <span class="arch-tag">extraction</span></div>
+            <div class="arch-item">Structured JSON output <span class="arch-tag">Pydantic</span></div>
+            <div class="arch-item">Per-doc system prompts <span class="arch-tag">typed</span></div>
+            <div class="arch-item">Batch via files API <span class="arch-tag">20+ props</span></div>
+          </div>
+          <div class="arch-card">
+            <div class="arch-card-title">Reconciliation Engine</div>
+            <div class="arch-item">field_rules.yaml <span class="arch-tag">config</span></div>
+            <div class="arch-item">Fuzzy address match <span class="arch-tag">rapidfuzz</span></div>
+            <div class="arch-item">Numeric tolerance <span class="arch-tag">±1% values</span></div>
+            <div class="arch-item">RAG scoring logic <span class="arch-tag">rules-based</span></div>
+            <div class="arch-item">Works item diff <span class="arch-tag">count + text</span></div>
+          </div>
+          <div class="arch-card">
+            <div class="arch-card-title">Output + Integration</div>
+            <div class="arch-item">Excel control sheet <span class="arch-tag">openpyxl</span></div>
+            <div class="arch-item">GHL webhook <span class="arch-tag">RED flag alert</span></div>
+            <div class="arch-item">Google Drive upload <span class="arch-tag">MCP</span></div>
+            <div class="arch-item">Notion DB row <span class="arch-tag">MCP</span></div>
+            <div class="arch-item">Email summary <span class="arch-tag">Gmail MCP</span></div>
+          </div>
+        </div>
+
+        <div style="margin-top:20px;">
+          <div class="section-title">GitHub Repos to Add to Claude Code</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:12px 16px;">
+              <div style="font-family:var(--mono); font-size:10px; color:var(--accent); margin-bottom:8px;">CORE DEPENDENCIES</div>
+              <div class="arch-item">github.com/anthropics/anthropic-sdk-python <span class="arch-tag">Claude API</span></div>
+              <div class="arch-item">github.com/jsvine/pdfplumber <span class="arch-tag">PDF tables + text</span></div>
+              <div class="arch-item">github.com/pymupdf/PyMuPDF <span class="arch-tag">PDF layout</span></div>
+              <div class="arch-item">github.com/python-openxml/python-docx <span class="arch-tag">Word files</span></div>
+              <div class="arch-item">github.com/openpyxl/openpyxl <span class="arch-tag">Excel I/O</span></div>
+              <div class="arch-item">github.com/pandas-dev/pandas <span class="arch-tag">data frames</span></div>
+              <div class="arch-item">github.com/pydantic/pydantic <span class="arch-tag">schema validation</span></div>
+            </div>
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:12px 16px;">
+              <div style="font-family:var(--mono); font-size:10px; color:var(--accent); margin-bottom:8px;">MATCHING + CLI + INTEGRATION</div>
+              <div class="arch-item">github.com/maxbachmann/RapidFuzz <span class="arch-tag">fuzzy string match</span></div>
+              <div class="arch-item">github.com/tiangolo/typer <span class="arch-tag">CLI interface</span></div>
+              <div class="arch-item">github.com/watchfiles/watchfiles <span class="arch-tag">folder watch</span></div>
+              <div class="arch-item">github.com/tqdm/tqdm <span class="arch-tag">progress bar</span></div>
+              <div class="arch-item">github.com/psf/requests <span class="arch-tag">GHL webhook</span></div>
+              <div class="arch-item">github.com/pyyaml/pyyaml <span class="arch-tag">rules config</span></div>
+              <div class="arch-item">github.com/xlsxwriter/xlsxwriter <span class="arch-tag">styled Excel</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:20px;">
+          <div class="section-title">MCP Servers to Connect</div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-size:11px;">
+              <div style="font-family:var(--mono); font-size:9px; color:var(--accent); margin-bottom:4px;">GOOGLE DRIVE MCP</div>
+              <div style="color:var(--text-muted);">Upload processed control sheets to<br>shared Drive folder per batch</div>
+            </div>
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-size:11px;">
+              <div style="font-family:var(--mono); font-size:9px; color:var(--accent); margin-bottom:4px;">NOTION MCP</div>
+              <div style="color:var(--text-muted);">Create a row per property in Notion DB<br>with RAG status and key field values</div>
+            </div>
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-size:11px;">
+              <div style="font-family:var(--mono); font-size:9px; color:var(--accent); margin-bottom:4px;">GMAIL MCP</div>
+              <div style="color:var(--text-muted);">Auto-email Stephen when RED flags<br>found, with field-level breakdown</div>
+            </div>
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:10px 14px; font-size:11px;">
+              <div style="font-family:var(--mono); font-size:9px; color:var(--accent); margin-bottom:4px;">GHL WEBHOOK</div>
+              <div style="color:var(--text-muted);">Trigger GHL task/note when batch<br>review completes — pipeline update</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:20px;">
+          <div class="section-title">Claude Code Project Structure</div>
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:16px; font-family:var(--mono); font-size:10px; color:var(--text-muted); line-height:2;">
+            <span style="color:var(--accent)">ih-batch-agent/</span><br>
+            &nbsp;&nbsp;<span style="color:var(--blue)">main.py</span> <span style="color:var(--text-dim)">← CLI entry: `python main.py --batch ./batch-2026-05/`</span><br>
+            &nbsp;&nbsp;<span style="color:var(--blue)">agents/</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-dim)">document_parser.py</span> <span style="color:var(--text-dim)">← routes each file type to correct parser</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-dim)">field_extractor.py</span> <span style="color:var(--text-dim)">← Claude API calls, one per doc type</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-dim)">reconciler.py</span> <span style="color:var(--text-dim)">← cross-references extracted fields</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-dim)">report_generator.py</span> <span style="color:var(--text-dim)">← outputs styled Excel + sends webhooks</span><br>
+            &nbsp;&nbsp;<span style="color:var(--blue)">schemas/</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-dim)">submission.py · valuation.py · survey.py · questionnaire.py · works.py</span><br>
+            &nbsp;&nbsp;<span style="color:var(--blue)">config/</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-dim)">field_rules.yaml</span> <span style="color:var(--text-dim)">← which fields must match across which docs</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-dim)">rag_thresholds.yaml</span> <span style="color:var(--text-dim)">← GREEN / AMBER / RED decision rules</span><br>
+            &nbsp;&nbsp;<span style="color:var(--blue)">templates/</span><br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span style="color:var(--text-dim)">control_sheet_template.xlsx</span> <span style="color:var(--text-dim)">← styled base template</span><br>
+            &nbsp;&nbsp;<span style="color:var(--blue)">output/</span> <span style="color:var(--text-dim)">← processed batch control sheets land here</span><br>
+            &nbsp;&nbsp;<span style="color:var(--blue)">CLAUDE.md</span> <span style="color:var(--text-dim)">← Claude Code skills file with Irish Homes context</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- FOOTER -->
+    <div class="footer-note">
+      <span>Generated by IH Batch Review Agent · Batch 2026-05 · Property 1 of 3 · 5 documents processed · 15 fields reconciled</span>
+      <span>ElevateX Solutions for Irish Homes · <span style="color:var(--green)">claude-sonnet-4</span></span>
+    </div>
+
+  </div>
+</div>
+
+<script>
+function switchTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>

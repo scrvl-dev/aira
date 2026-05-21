@@ -1,0 +1,15 @@
+anthropic>=0.25.0
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+pdfplumber>=0.11.0
+PyMuPDF>=1.24.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+XlsxWriter>=3.2.0
+pandas>=2.2.0
+pydantic>=2.7.0
+rapidfuzz>=3.9.0
+PyYAML>=6.0.0
+requests>=2.32.0
+aiofiles>=23.2.1

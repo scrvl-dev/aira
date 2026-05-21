@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Irish Homes — MTR Batch Review</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500;600&display=swap');
+  :root {
+    --bg:#0c0f0e; --s1:#141918; --s2:#1c2320; --bdr:#2a3330;
+    --green:#22c55e; --gd:#166534; --gfill:#1a4731;
+    --amber:#f59e0b; --afill:#451a03;
+    --red:#ef4444; --rfill:#450a0a;
+    --text:#e5ede8; --muted:#6b7c74; --dim:#4a5c54;
+    --mono:'IBM Plex Mono',monospace; --sans:'DM Sans',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;flex-direction:column}
+  
+  /* TOPBAR */
+  .bar{background:var(--s1);border-bottom:1px solid var(--bdr);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50}
+  .logo{font-family:var(--mono);font-size:12px;font-weight:600;color:var(--green);letter-spacing:.1em}
+  .logo span{color:var(--muted)}
+  .tagline{font-size:11px;color:var(--dim);font-family:var(--mono)}
+
+  /* MAIN */
+  main{flex:1;display:grid;grid-template-columns:420px 1fr;height:calc(100vh - 49px)}
+
+  /* LEFT PANEL — UPLOAD */
+  .upload-panel{background:var(--s1);border-right:1px solid var(--bdr);padding:28px;display:flex;flex-direction:column;gap:20px;overflow-y:auto}
+  
+  .panel-label{font-family:var(--mono);font-size:9px;letter-spacing:.15em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+  
+  .drop-zone{border:2px dashed var(--bdr);border-radius:10px;padding:36px 20px;text-align:center;cursor:pointer;transition:all .2s;position:relative}
+  .drop-zone:hover,.drop-zone.drag{border-color:var(--green);background:rgba(34,197,94,.04)}
+  .drop-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
+  .drop-icon{font-size:32px;margin-bottom:10px;display:block}
+  .drop-title{font-size:14px;font-weight:500;color:var(--text);margin-bottom:4px}
+  .drop-sub{font-size:11px;color:var(--muted)}
+  .drop-types{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:8px}
+
+  /* FILE LIST */
+  .file-list{display:flex;flex-direction:column;gap:6px}
+  .file-item{background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:9px 12px;display:flex;align-items:center;gap:10px;animation:slideIn .2s ease}
+  @keyframes slideIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .file-icon{font-size:16px;flex-shrink:0}
+  .file-info{flex:1;min-width:0}
+  .file-name{font-size:11px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .file-type{font-family:var(--mono);font-size:9px;margin-top:2px}
+  .file-type.detected{color:var(--green)}
+  .file-type.unknown{color:var(--amber)}
+  .file-size{font-family:var(--mono);font-size:9px;color:var(--dim);flex-shrink:0}
+  .file-remove{background:none;border:none;color:var(--dim);cursor:pointer;padding:2px 4px;border-radius:3px;font-size:12px}
+  .file-remove:hover{color:var(--red)}
+
+  /* DOC CHECKLIST */
+  .checklist{background:var(--s2);border:1px solid var(--bdr);border-radius:8px;padding:14px}
+  .check-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--bdr)}
+  .check-row:last-child{border-bottom:none}
+  .check-label{font-size:11px;color:var(--muted)}
+  .check-status{font-family:var(--mono);font-size:10px;font-weight:600}
+  .check-status.ok{color:var(--green)}
+  .check-status.missing{color:var(--dim)}
+
+  /* API KEY */
+  .api-input-wrap{position:relative}
+  .api-input{width:100%;background:var(--s2);border:1px solid var(--bdr);border-radius:6px;padding:10px 12px;font-family:var(--mono);font-size:11px;color:var(--text);outline:none;transition:border .15s}
+  .api-input:focus{border-color:var(--green)}
+  .api-input::placeholder{color:var(--dim)}
+
+  /* RUN BUTTON */
+  .run-btn{width:100%;padding:14px;background:var(--green);color:#000;border:none;border-radius:8px;font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:8px}
+  .run-btn:hover:not(:disabled){opacity:.9;transform:translateY(-1px)}
+  .run-btn:disabled{opacity:.35;cursor:not-allowed;transform:none}
+
+  /* RIGHT PANEL — RESULTS */
+  .results-panel{overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:16px}
+  
+  .empty-state{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dim);text-align:center;padding:40px}
+  .empty-icon{font-size:48px;opacity:.4}
+  .empty-title{font-family:var(--mono);font-size:13px;letter-spacing:.08em}
+  .empty-sub{font-size:11px;line-height:1.6;max-width:280px}
+
+  /* PROGRESS */
+  .progress-card{background:var(--s1);border:1px solid var(--bdr);border-radius:8px;padding:20px;display:none}
+  .progress-card.visible{display:block}
+  .progress-label{font-family:var(--mono);font-size:10px;color:var(--muted);margin-bottom:10px}
+  .progress-bar-wrap{background:var(--s2);border-radius:4px;height:6px;overflow:hidden;margin-bottom:12px}
+  .progress-bar{height:100%;background:var(--green);border-radius:4px;transition:width .4s ease;width:0%}
+  .progress-steps{font-family:var(--mono);font-size:10px;color:var(--dim);line-height:1.8;max-height:120px;overflow-y:auto}
+  .progress-step{color:var(--muted)}
+  .progress-step.latest{color:var(--green)}
+
+  /* RESULT CARD */
+  .result-card{display:none}
+  .result-card.visible{display:block}
+  
+  .result-header{background:var(--s1);border:1px solid var(--bdr);border-radius:8px;padding:18px 22px;display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px}
+  .result-address{font-size:14px;font-weight:600;color:var(--text);margin-bottom:4px}
+  .result-meta{font-size:11px;color:var(--muted);font-family:var(--mono)}
+  .ov-badge{padding:8px 16px;border-radius:6px;font-family:var(--mono);font-size:12px;font-weight:600;text-align:center}
+  .ov-RED{background:var(--rfill);color:var(--red)}
+  .ov-AMBER{background:var(--afill);color:var(--amber)}
+  .ov-GREEN{background:var(--gfill);color:var(--green)}
+
+  /* FIELD TABLE */
+  .field-table{background:var(--s1);border:1px solid var(--bdr);border-radius:8px;overflow:hidden}
+  .ft-head{display:grid;grid-template-columns:200px 1fr 60px;background:var(--s2);padding:8px 14px;border-bottom:1px solid var(--bdr)}
+  .ft-col{font-family:var(--mono);font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+  .ft-row{display:grid;grid-template-columns:200px 1fr 60px;padding:9px 14px;border-bottom:1px solid var(--bdr);transition:background .1s}
+  .ft-row:last-child{border-bottom:none}
+  .ft-row:hover{background:var(--s2)}
+  .ft-field{font-size:11px;font-weight:500;color:var(--text)}
+  .ft-field-sub{font-family:var(--mono);font-size:8px;color:var(--dim);margin-top:1px}
+  .ft-values{font-family:var(--mono);font-size:10px;color:var(--muted);display:grid;grid-template-columns:repeat(5,1fr);gap:4px}
+  .ft-val{padding:2px 4px;border-radius:2px;font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ft-val-label{font-size:7px;color:var(--dim);margin-bottom:1px}
+  .rag-pill{font-family:var(--mono);font-size:9px;font-weight:600;padding:3px 7px;border-radius:3px;text-align:center}
+  .rag-GREEN{background:var(--gfill);color:var(--green)}
+  .rag-AMBER{background:var(--afill);color:var(--amber)}
+  .rag-RED{background:var(--rfill);color:var(--red)}
+  .rag-MISSING{background:var(--s2);color:var(--dim)}
+
+  /* ISSUES */
+  .issue-item{background:var(--s1);border:1px solid var(--bdr);border-left:3px solid;border-radius:6px;padding:12px 14px;margin-bottom:8px}
+  .issue-item.RED{border-left-color:var(--red)}
+  .issue-item.AMBER{border-left-color:var(--amber)}
+  .issue-title{font-size:12px;font-weight:600;color:var(--text);margin-bottom:3px}
+  .issue-desc{font-size:11px;color:var(--muted);line-height:1.4}
+  .issue-src{font-family:var(--mono);font-size:9px;color:var(--dim);margin-top:5px}
+
+  /* DOWNLOAD */
+  .dl-btn{width:100%;padding:13px;background:transparent;border:1px solid var(--green);border-radius:8px;font-family:var(--mono);font-size:11px;font-weight:600;color:var(--green);cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:8px}
+  .dl-btn:hover{background:var(--gfill)}
+
+  /* TABS */
+  .tabs{display:flex;gap:2px;border-bottom:1px solid var(--bdr);margin-bottom:14px}
+  .tab{padding:7px 14px;font-size:11px;font-family:var(--mono);color:var(--dim);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s}
+  .tab:hover{color:var(--muted)}
+  .tab.active{color:var(--green);border-bottom-color:var(--green)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+
+  .section-label{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+  .section-label::after{content:'';flex:1;height:1px;background:var(--bdr)}
+
+  ::-webkit-scrollbar{width:4px;height:4px}
+  ::-webkit-scrollbar-thumb{background:var(--bdr);border-radius:2px}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div class="logo">Irish Homes <span>/</span> MTR Batch Review Agent</div>
+  <div class="tagline">Drop 5 docs → AI review → RAG control sheet</div>
+</div>
+
+<main>
+  <!-- ─── LEFT UPLOAD PANEL ─────────────────────────────── -->
+  <div class="upload-panel">
+    
+    <div>
+      <div class="panel-label">Upload Property Documents</div>
+      <div class="drop-zone" id="dropZone">
+        <input type="file" id="fileInput" multiple accept=".pdf,.xlsx,.xls,.docx,.doc,.csv">
+        <span class="drop-icon">📂</span>
+        <div class="drop-title">Drop files or click to browse</div>
+        <div class="drop-sub">Upload all 5 documents for one property</div>
+        <div class="drop-types">PDF · XLSX · DOCX · CSV accepted</div>
+      </div>
+    </div>
+
+    <!-- File list -->
+    <div id="fileListWrap" style="display:none">
+      <div class="panel-label">Files Loaded</div>
+      <div class="file-list" id="fileList"></div>
+    </div>
+
+    <!-- Doc checklist -->
+    <div>
+      <div class="panel-label">Required Documents</div>
+      <div class="checklist">
+        <div class="check-row">
+          <span class="check-label">📊 Submission Sheet</span>
+          <span class="check-status missing" id="chk-submission">MISSING</span>
+        </div>
+        <div class="check-row">
+          <span class="check-label">📋 List of Works</span>
+          <span class="check-status missing" id="chk-works">MISSING</span>
+        </div>
+        <div class="check-row">
+          <span class="check-label">🏠 Condition Survey</span>
+          <span class="check-status missing" id="chk-survey">MISSING</span>
+        </div>
+        <div class="check-row">
+          <span class="check-label">📝 Property Questionnaire</span>
+          <span class="check-status missing" id="chk-questionnaire">MISSING</span>
+        </div>
+        <div class="check-row">
+          <span class="check-label">💰 Valuation Report</span>
+          <span class="check-status missing" id="chk-valuation">MISSING</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- API Key input (if not set server-side) -->
+    <div id="apiKeySection">
+      <div class="panel-label">Anthropic API Key</div>
+      <div class="api-input-wrap">
+        <input type="password" class="api-input" id="apiKey" placeholder="sk-ant-... (stored in memory only)">
+      </div>
+      <div style="font-size:10px;color:var(--dim);margin-top:5px;font-family:var(--mono)">
+        Key is sent to the server only during processing and not stored.
+      </div>
+    </div>
+
+    <!-- Run button -->
+    <button class="run-btn" id="runBtn" disabled onclick="runReview()">
+      <span id="runBtnIcon">▶</span>
+      <span id="runBtnText">RUN BATCH REVIEW</span>
+    </button>
+
+    <!-- Clear button -->
+    <button onclick="clearAll()" style="width:100%;padding:9px;background:transparent;border:1px solid var(--bdr);border-radius:6px;font-family:var(--mono);font-size:10px;color:var(--muted);cursor:pointer;">
+      ✕ Clear All
+    </button>
+
+  </div>
+
+  <!-- ─── RIGHT RESULTS PANEL ───────────────────────────── -->
+  <div class="results-panel">
+
+    <!-- Empty state -->
+    <div class="empty-state" id="emptyState">
+      <span class="empty-icon">🔍</span>
+      <div class="empty-title">NO REVIEW RUNNING</div>
+      <div class="empty-sub">Upload the 5 documents for a property and click Run Batch Review to start.</div>
+    </div>
+
+    <!-- Progress card -->
+    <div class="progress-card" id="progressCard">
+      <div class="progress-label" id="progressLabel">Initialising...</div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <div class="progress-steps" id="progressSteps"></div>
+    </div>
+
+    <!-- Result -->
+    <div class="result-card" id="resultCard">
+
+      <!-- Header -->
+      <div class="result-header">
+        <div>
+          <div class="result-address" id="resultAddress">—</div>
+          <div class="result-meta" id="resultMeta">—</div>
+        </div>
+        <div>
+          <div style="font-family:var(--mono);font-size:8px;color:var(--dim);text-align:right;margin-bottom:4px">OVERALL STATUS</div>
+          <div class="ov-badge" id="resultBadge">—</div>
+          <div style="font-family:var(--mono);font-size:9px;color:var(--dim);text-align:center;margin-top:4px" id="resultCounts">—</div>
+        </div>
+      </div>
+
+      <!-- Download -->
+      <button class="dl-btn" id="dlBtn" onclick="downloadExcel()" style="display:none;margin-bottom:12px">
+        ⬇ DOWNLOAD EXCEL CONTROL SHEET
+      </button>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <div class="tab active" onclick="switchTab('fields',this)">Field Reconciliation</div>
+        <div class="tab" onclick="switchTab('issues',this)">Issues Log</div>
+        <div class="tab" onclick="switchTab('works',this)">Works</div>
+      </div>
+
+      <div class="tab-panel active" id="tab-fields">
+        <div class="section-label">Fields</div>
+        <div class="field-table">
+          <div class="ft-head">
+            <div class="ft-col">Field</div>
+            <div class="ft-col" style="grid-template-columns:repeat(5,1fr);display:grid;gap:4px;font-size:7px">
+              <span>SUB</span><span>VAL</span><span>SURVEY</span><span>Q'AIRE</span><span>WORKS</span>
+            </div>
+            <div class="ft-col">RAG</div>
+          </div>
+          <div id="fieldsBody"></div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-issues">
+        <div class="section-label">Issues Requiring Review</div>
+        <div id="issuesBody"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-works">
+        <div class="section-label">Works Item Reconciliation</div>
+        <div id="worksBody"></div>
+      </div>
+
+    </div>
+
+  </div>
+</main>
+
+<script>
+  let selectedFiles = {};
+  let detectedTypes = {};
+  let currentJobId = null;
+  let progressInterval = null;
+
+  const DOC_PATTERNS = {
+    submission: ['submission','sub_sheet','sub sheet'],
+    works: ['list_of_works','list of works','works','low','ih_-_list'],
+    survey: ['condition_survey','condition survey','building_condition','survey'],
+    questionnaire: ['questionnaire','property_questionnaire','mtr_property'],
+    valuation: ['valuation','val_report','bv_real'],
+  };
+
+  const DOC_ICONS = {
+    submission:'📊', works:'📋', survey:'🏠', questionnaire:'📝', valuation:'💰', unknown:'📄'
+  };
+
+  function detectType(filename) {
+    const n = filename.toLowerCase().replace(/[-\s]/g,'_');
+    for (const [type, patterns] of Object.entries(DOC_PATTERNS)) {
+      if (patterns.some(p => n.includes(p.replace(/\s/g,'_')))) return type;
+    }
+    return 'unknown';
+  }
+
+  // Drag & Drop
+  const dz = document.getElementById('dropZone');
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+  dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('drag'); handleFiles(e.dataTransfer.files); });
+  document.getElementById('fileInput').addEventListener('change', e => handleFiles(e.target.files));
+
+  function handleFiles(files) {
+    Array.from(files).forEach(f => {
+      selectedFiles[f.name] = f;
+      detectedTypes[f.name] = detectType(f.name);
+    });
+    renderFileList();
+    updateChecklist();
+    updateRunBtn();
+  }
+
+  function removeFile(name) {
+    delete selectedFiles[name];
+    delete detectedTypes[name];
+    renderFileList();
+    updateChecklist();
+    updateRunBtn();
+  }
+
+  function renderFileList() {
+    const wrap = document.getElementById('fileListWrap');
+    const list = document.getElementById('fileList');
+    const files = Object.keys(selectedFiles);
+    if (!files.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    list.innerHTML = files.map(name => {
+      const f = selectedFiles[name];
+      const type = detectedTypes[name];
+      const size = f.size < 1024*1024 ? `${(f.size/1024).toFixed(0)}KB` : `${(f.size/1024/1024).toFixed(1)}MB`;
+      return `<div class="file-item">
+        <span class="file-icon">${DOC_ICONS[type]}</span>
+        <div class="file-info">
+          <div class="file-name">${name}</div>
+          <div class="file-type ${type==='unknown'?'unknown':'detected'}">${type.toUpperCase()}</div>
+        </div>
+        <span class="file-size">${size}</span>
+        <button class="file-remove" onclick="removeFile('${name.replace(/'/g,"\\'")}')">✕</button>
+      </div>`;
+    }).join('');
+  }
+
+  function updateChecklist() {
+    const types = Object.values(detectedTypes);
+    ['submission','works','survey','questionnaire','valuation'].forEach(t => {
+      const el = document.getElementById(`chk-${t}`);
+      if (types.includes(t)) {
+        el.textContent = 'LOADED';
+        el.className = 'check-status ok';
+      } else {
+        el.textContent = 'MISSING';
+        el.className = 'check-status missing';
+      }
+    });
+  }
+
+  function updateRunBtn() {
+    const btn = document.getElementById('runBtn');
+    const hasFiles = Object.keys(selectedFiles).length > 0;
+    btn.disabled = !hasFiles;
+  }
+
+  function clearAll() {
+    selectedFiles = {};
+    detectedTypes = {};
+    currentJobId = null;
+    if (progressInterval) clearInterval(progressInterval);
+    renderFileList();
+    updateChecklist();
+    updateRunBtn();
+    document.getElementById('emptyState').style.display = 'flex';
+    document.getElementById('progressCard').classList.remove('visible');
+    document.getElementById('resultCard').classList.remove('visible');
+    document.getElementById('dlBtn').style.display = 'none';
+  }
+
+  async function runReview() {
+    const btn = document.getElementById('runBtn');
+    const apiKey = document.getElementById('apiKey').value.trim();
+    const files = Object.values(selectedFiles);
+
+    if (!files.length) return alert('Please upload files first');
+
+    btn.disabled = true;
+    document.getElementById('runBtnIcon').textContent = '⏳';
+    document.getElementById('runBtnText').textContent = 'SUBMITTING...';
+
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('progressCard').classList.add('visible');
+    document.getElementById('resultCard').classList.remove('visible');
+    document.getElementById('progressSteps').innerHTML = '';
+    document.getElementById('progressBar').style.width = '0%';
+
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f));
+    if (apiKey) formData.append('api_key', apiKey);
+
+    try {
+      const resp = await fetch('/api/review', { method: 'POST', body: formData });
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.detail || 'Server error');
+      }
+      const { job_id } = await resp.json();
+      currentJobId = job_id;
+      startProgressPolling(job_id);
+    } catch(e) {
+      alert(`Error: ${e.message}`);
+      btn.disabled = false;
+      document.getElementById('runBtnIcon').textContent = '▶';
+      document.getElementById('runBtnText').textContent = 'RUN BATCH REVIEW';
+    }
+  }
+
+  function startProgressPolling(jobId) {
+    const evtSource = new EventSource(`/api/progress/${jobId}`);
+    
+    evtSource.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      updateProgress(data);
+      
+      if (data.status === 'complete') {
+        evtSource.close();
+        loadResult(jobId);
+      } else if (data.status === 'error') {
+        evtSource.close();
+        showError(data.error);
+      }
+    };
+
+    evtSource.onerror = () => {
+      evtSource.close();
+      // Fallback to polling
+      progressInterval = setInterval(() => pollProgress(jobId), 800);
+    };
+  }
+
+  async function pollProgress(jobId) {
+    try {
+      const resp = await fetch(`/api/progress/${jobId}`);
+      // Progress via polling fallback not shown here
+    } catch(e) {}
+  }
+
+  function updateProgress(data) {
+    document.getElementById('progressBar').style.width = `${data.progress}%`;
+    document.getElementById('progressLabel').textContent = 
+      `Processing... ${data.progress}%`;
+    
+    const stepsEl = document.getElementById('progressSteps');
+    if (data.steps && data.steps.length) {
+      stepsEl.innerHTML = data.steps.map((s, i) => 
+        `<div class="progress-step ${i===data.steps.length-1?'latest':''}">${s}</div>`
+      ).join('');
+      stepsEl.scrollTop = stepsEl.scrollHeight;
+    }
+  }
+
+  async function loadResult(jobId) {
+    try {
+      const resp = await fetch(`/api/result/${jobId}`);
+      const result = await resp.json();
+      renderResult(result, jobId);
+      
+      const btn = document.getElementById('runBtn');
+      btn.disabled = false;
+      document.getElementById('runBtnIcon').textContent = '▶';
+      document.getElementById('runBtnText').textContent = 'RUN BATCH REVIEW';
+    } catch(e) {
+      showError(e.message);
+    }
+  }
+
+  function renderResult(result, jobId) {
+    currentJobId = jobId;
+    document.getElementById('progressCard').classList.remove('visible');
+    document.getElementById('resultCard').classList.add('visible');
+
+    document.getElementById('resultAddress').textContent = result.address || 'Unknown Property';
+    document.getElementById('resultMeta').textContent = 
+      `Ref: ${result.property_ref} · ${Object.values(result.doc_summary).filter(Boolean).length}/5 docs`;
+
+    const badge = document.getElementById('resultBadge');
+    badge.textContent = result.overall_status === 'RED' ? '⚠ REVIEW REQUIRED' : 
+                        result.overall_status === 'AMBER' ? '⚡ CHECK NEEDED' : '✓ CLEAR';
+    badge.className = `ov-badge ov-${result.overall_status}`;
+    document.getElementById('resultCounts').textContent = 
+      `${result.red_count} RED · ${result.amber_count} AMBER · ${result.green_count} GREEN`;
+
+    // Fields
+    document.getElementById('fieldsBody').innerHTML = result.fields.map(f => `
+      <div class="ft-row">
+        <div>
+          <div class="ft-field">${f.field}</div>
+          <div class="ft-field-sub">${f.priority}</div>
+        </div>
+        <div class="ft-values">
+          ${['submission','valuation','survey','questionnaire','works'].map(src => `
+            <div>
+              <div class="ft-val-label">${src.substring(0,3).toUpperCase()}</div>
+              <div class="ft-val" style="color:${f.status==='GREEN'?'#22c55e':f.status==='RED'?'#ef4444':'#f59e0b'}"
+                   title="${f[src]||''}">${truncate(f[src],20)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div><span class="rag-pill rag-${f.status}">${f.status}</span></div>
+      </div>
+    `).join('');
+
+    // Issues
+    document.getElementById('issuesBody').innerHTML = result.issues.length
+      ? result.issues.map(issue => `
+          <div class="issue-item ${issue.severity}">
+            <div class="issue-title">${issue.title}</div>
+            <div class="issue-desc">${issue.description}</div>
+            <div class="issue-src">${issue.source}</div>
+          </div>
+        `).join('')
+      : '<div style="color:var(--muted);font-size:12px;padding:20px;text-align:center">No issues found — all fields reconciled ✓</div>';
+
+    // Works
+    document.getElementById('worksBody').innerHTML = result.works_reconciliation.length
+      ? `<div style="display:flex;flex-direction:column;gap:6px">${
+          result.works_reconciliation.map(w => `
+            <div style="background:var(--s1);border:1px solid var(--bdr);border-radius:5px;padding:8px 12px;display:flex;gap:10px;align-items:center">
+              <span style="font-family:var(--mono);font-size:9px;color:var(--dim);flex-shrink:0">#${String(w.number).padStart(2,'0')}</span>
+              <span style="flex:1;font-size:11px;color:var(--muted)">${w.description}</span>
+              <span style="font-family:var(--mono);font-size:10px;color:${w.in_survey?'#22c55e':'#ef4444'}">${w.in_survey?'✓':'✗'} SRV</span>
+              <span style="font-family:var(--mono);font-size:10px;color:${w.in_works?'#22c55e':'#ef4444'}">${w.in_works?'✓':'✗'} WRK</span>
+              <span class="rag-pill rag-${w.status}" style="font-size:8px">${w.status}</span>
+            </div>
+          `).join('')
+        }</div>`
+      : '<div style="color:var(--muted);font-size:12px;padding:20px;text-align:center">No works data available</div>';
+
+    document.getElementById('dlBtn').style.display = 'flex';
+  }
+
+  function showError(msg) {
+    document.getElementById('progressLabel').textContent = `Error: ${msg}`;
+    document.getElementById('progressBar').style.background = 'var(--red)';
+    const btn = document.getElementById('runBtn');
+    btn.disabled = false;
+    document.getElementById('runBtnIcon').textContent = '▶';
+    document.getElementById('runBtnText').textContent = 'RUN BATCH REVIEW';
+  }
+
+  async function downloadExcel() {
+    if (!currentJobId) return;
+    const a = document.createElement('a');
+    a.href = `/api/download/${currentJobId}`;
+    a.download = `IH_Control_Sheet_${currentJobId}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
+  function switchTab(id, el) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById(`tab-${id}`).classList.add('active');
+    el.classList.add('active');
+  }
+
+  function truncate(s, n) {
+    if (!s || s === 'null') return '—';
+    return String(s).length > n ? String(s).substring(0,n)+'…' : String(s);
+  }
+</script>
+</body>
+</html>

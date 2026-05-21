@@ -1,0 +1,585 @@
+"""
+Reconciler
+Cross-references extracted fields across documents and assigns RAG status.
+Rules-based engine — no Claude needed here, just deterministic logic.
+"""
+import re
+from typing import Optional
+from app.schemas.models import (
+    RAGStatus, FieldResult, Issue, WorkItem, BatchResult,
+    SubmissionData, ValuationData, SurveyData, QuestionnaireData, WorksData
+)
+
+try:
+    from rapidfuzz import fuzz
+    HAS_RAPIDFUZZ = True
+except ImportError:
+    HAS_RAPIDFUZZ = False
+
+
+# ─── Normalisation helpers ───────────────────────────────────────────────────
+
+def norm_str(s) -> str:
+    """Normalise string for comparison."""
+    if s is None:
+        return ""
+    return str(s).lower().strip().replace(",", "").replace(".", "")
+
+
+def norm_eircode(s) -> str:
+    """Normalise eircode — remove spaces, uppercase."""
+    if s is None:
+        return ""
+    return re.sub(r"\s+", "", str(s)).upper()
+
+
+def norm_numeric(s) -> Optional[float]:
+    """Extract numeric value from string like '€405,000' → 405000.0"""
+    if s is None:
+        return None
+    cleaned = re.sub(r"[€,£$\s]", "", str(s))
+    try:
+        return float(cleaned)
+    except (ValueError, TypeError):
+        return None
+
+
+def fuzzy_match(a: str, b: str, threshold: int = 80) -> bool:
+    """Fuzzy string match using rapidfuzz if available."""
+    if not a or not b:
+        return False
+    if HAS_RAPIDFUZZ:
+        return fuzz.partial_ratio(norm_str(a), norm_str(b)) >= threshold
+    # Fallback: simple substring check
+    a_n, b_n = norm_str(a), norm_str(b)
+    return a_n in b_n or b_n in a_n or a_n == b_n
+
+
+def numeric_rag(val1: Optional[float], val2: Optional[float],
+                amber_pct: float = 0.02, red_pct: float = 0.05) -> RAGStatus:
+    """Compare two numeric values with tolerance bands."""
+    if val1 is None and val2 is None:
+        return RAGStatus.MISSING
+    if val1 is None or val2 is None:
+        return RAGStatus.AMBER
+    if val1 == 0 and val2 == 0:
+        return RAGStatus.GREEN
+    max_val = max(abs(val1), abs(val2))
+    if max_val == 0:
+        return RAGStatus.GREEN
+    pct_diff = abs(val1 - val2) / max_val
+    if pct_diff <= amber_pct:
+        return RAGStatus.GREEN
+    if pct_diff <= red_pct:
+        return RAGStatus.AMBER
+    return RAGStatus.RED
+
+
+# ─── Individual field reconcilers ────────────────────────────────────────────
+
+def check_address(models: dict) -> FieldResult:
+    s = models.get("submission")
+    v = models.get("valuation")
+    su = models.get("survey")
+    q = models.get("questionnaire")
+    w = models.get("works")
+
+    vals = {
+        "submission": getattr(s, "address", None) if hasattr(s, "address") else s.get("address") if isinstance(s, dict) else None,
+        "valuation":  getattr(v, "address", None) if hasattr(v, "address") else v.get("address") if isinstance(v, dict) else None,
+        "survey":     getattr(su, "address", None) if hasattr(su, "address") else su.get("address") if isinstance(su, dict) else None,
+        "questionnaire": getattr(q, "address", None) if hasattr(q, "address") else q.get("address") if isinstance(q, dict) else None,
+        "works":      getattr(w, "address", None) if hasattr(w, "address") else w.get("address") if isinstance(w, dict) else None,
+    }
+
+    non_null = [v for v in vals.values() if v]
+    if not non_null:
+        status = RAGStatus.RED
+    elif len(non_null) == 1:
+        status = RAGStatus.AMBER
+    else:
+        # All present addresses should fuzzy match
+        base = non_null[0]
+        all_match = all(fuzzy_match(base, other, 70) for other in non_null[1:])
+        status = RAGStatus.GREEN if all_match else RAGStatus.AMBER
+
+    return FieldResult(
+        field="Property Address", priority="CRITICAL",
+        submission=vals["submission"], valuation=vals["valuation"],
+        survey=vals["survey"], questionnaire=vals["questionnaire"], works=vals["works"],
+        status=status
+    )
+
+
+def check_eircode(models: dict) -> FieldResult:
+    def get(m, key):
+        if m is None: return None
+        return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+    vals = {
+        "submission": norm_eircode(get(models.get("submission"), "eircode")),
+        "valuation":  norm_eircode(get(models.get("valuation"), "eircode")),
+        "survey":     norm_eircode(get(models.get("survey"), "eircode") or get(models.get("survey"), "address")),
+        "questionnaire": norm_eircode(get(models.get("questionnaire"), "eircode")),
+        "works":      norm_eircode(get(models.get("works"), "address")),
+    }
+
+    non_null = [v for v in vals.values() if v]
+    if not non_null:
+        return FieldResult(field="Eircode", priority="CRITICAL", status=RAGStatus.RED,
+                          note="No eircode found in any document")
+
+    unique = set(non_null)
+    if len(unique) == 1:
+        status = RAGStatus.GREEN
+        note = None
+    elif len(unique) == 2:
+        status = RAGStatus.AMBER
+        note = f"Formatting difference: {', '.join(unique)}"
+    else:
+        status = RAGStatus.RED
+        note = f"Multiple different eircodes: {', '.join(unique)}"
+
+    return FieldResult(
+        field="Eircode", priority="CRITICAL",
+        submission=vals["submission"] or None,
+        valuation=vals["valuation"] or None,
+        survey=vals["survey"] or None,
+        questionnaire=vals["questionnaire"] or None,
+        status=status, note=note
+    )
+
+
+def check_applicant_name(models: dict) -> FieldResult:
+    def get(m, *keys):
+        if m is None: return None
+        for k in keys:
+            v = getattr(m, k, None) if not isinstance(m, dict) else m.get(k)
+            if v: return v
+        return None
+
+    sub_name = get(models.get("submission"), "borrower_1")
+    val_name = get(models.get("valuation"), "applicant")
+    sur_name = get(models.get("survey"), "prepared_for")
+    q_name   = get(models.get("questionnaire"), "applicant")
+
+    # Check if survey "prepared_for" matches borrower name
+    status = RAGStatus.GREEN
+    note = None
+
+    names = [n for n in [sub_name, val_name, q_name] if n]
+    if names:
+        base = names[0]
+        if not all(fuzzy_match(base, n, 75) for n in names[1:]):
+            status = RAGStatus.RED
+            note = f"Name conflict: {', '.join(set(names))}"
+
+    if sur_name and names:
+        if not any(fuzzy_match(sur_name, n, 70) for n in names):
+            status = RAGStatus.RED
+            note = f"Survey prepared for '{sur_name}' but borrower is '{names[0]}'"
+
+    if not names:
+        status = RAGStatus.AMBER
+
+    return FieldResult(
+        field="Applicant Name", priority="CRITICAL",
+        submission=sub_name, valuation=val_name, survey=sur_name,
+        questionnaire=q_name, status=status, note=note
+    )
+
+
+def check_folio(models: dict) -> FieldResult:
+    def get(m, key):
+        if m is None: return None
+        return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+    sub_folio = get(models.get("submission"), "folio")
+    sur_folio = get(models.get("survey"), "folio")
+    val_folio = get(models.get("valuation"), "folio")
+    q_folio   = get(models.get("questionnaire"), "folio")
+
+    critical_vals = [v for v in [sub_folio, sur_folio] if v]
+
+    if not critical_vals:
+        status = RAGStatus.RED
+        note = "Folio missing from submission sheet and condition survey"
+    elif len(set(norm_str(v) for v in critical_vals)) == 1:
+        status = RAGStatus.GREEN if len(critical_vals) >= 2 else RAGStatus.AMBER
+        note = "Folio absent from valuation report" if not val_folio else None
+    else:
+        status = RAGStatus.RED
+        note = f"Folio conflict: {sub_folio} vs {sur_folio}"
+
+    return FieldResult(
+        field="Folio Number", priority="CRITICAL",
+        submission=sub_folio, valuation=val_folio,
+        survey=sur_folio, questionnaire=q_folio,
+        status=status, note=note
+    )
+
+
+def check_bedrooms(models: dict) -> FieldResult:
+    def get(m, key):
+        if m is None: return None
+        v = getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+        return str(int(float(v))) if v else None
+
+    beds = {
+        "submission":    get(models.get("submission"), "bedrooms"),
+        "valuation":     get(models.get("valuation"), "bedrooms"),
+        "survey":        get(models.get("survey"), "bedrooms"),
+        "questionnaire": get(models.get("questionnaire"), "bedrooms"),
+    }
+    vals = [v for v in beds.values() if v]
+    unique = set(vals)
+    status = RAGStatus.GREEN if len(unique) <= 1 else RAGStatus.RED
+
+    return FieldResult(
+        field="Number of Bedrooms", priority="CRITICAL",
+        submission=beds["submission"], valuation=beds["valuation"],
+        survey=beds["survey"], questionnaire=beds["questionnaire"],
+        status=status
+    )
+
+
+def check_property_type(models: dict) -> FieldResult:
+    def get(m, key):
+        if m is None: return None
+        return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+    types = {k: get(models.get(k), "property_type")
+             for k in ["submission", "valuation", "survey", "questionnaire"]}
+    vals = [v for v in types.values() if v]
+
+    if not vals:
+        return FieldResult(field="Property Type", priority="HIGH",
+                          submission=None, status=RAGStatus.AMBER)
+
+    base = norm_str(vals[0])
+    # Semi-detached variations
+    semi_variants = ["semi", "semi-detached", "semi detached", "semidetached"]
+    all_semi = all(any(sv in norm_str(v) for sv in semi_variants) for v in vals)
+    status = RAGStatus.GREEN if all_semi else (
+        RAGStatus.AMBER if len(set(norm_str(v) for v in vals)) <= 2 else RAGStatus.RED
+    )
+
+    return FieldResult(
+        field="Property Type", priority="HIGH",
+        submission=types["submission"], valuation=types["valuation"],
+        survey=types["survey"], questionnaire=types["questionnaire"],
+        status=status
+    )
+
+
+def check_omv(models: dict) -> FieldResult:
+    def get(m, key):
+        if m is None: return None
+        return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+    sub_val = get(models.get("submission"), "open_market_value")
+    val_val = get(models.get("valuation"), "open_market_value")
+
+    sub_num = norm_numeric(sub_val)
+    val_num = norm_numeric(val_val)
+
+    status = numeric_rag(sub_num, val_num)
+    note = None
+    if sub_num and val_num and sub_num != val_num:
+        note = f"Difference: €{abs(sub_num - val_num):,.0f}"
+
+    return FieldResult(
+        field="Open Market Value", priority="CRITICAL",
+        submission=f"€{sub_num:,.0f}" if sub_num else sub_val,
+        valuation=f"€{val_num:,.0f}" if val_num else val_val,
+        status=status, note=note
+    )
+
+
+def check_rental(models: dict) -> FieldResult:
+    def get(m, key):
+        if m is None: return None
+        return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+    sub_val = get(models.get("submission"), "market_rent")
+    val_val = get(models.get("valuation"), "rental")
+
+    sub_num = norm_numeric(sub_val)
+    val_num = norm_numeric(val_val)
+
+    status = numeric_rag(sub_num, val_num)
+
+    return FieldResult(
+        field="Monthly Rental", priority="CRITICAL",
+        submission=f"€{sub_num:,.0f}" if sub_num else sub_val,
+        valuation=f"€{val_num:,.0f}" if val_num else val_val,
+        status=status
+    )
+
+
+def check_condition_rating(models: dict) -> FieldResult:
+    su = models.get("survey")
+    if su is None:
+        return FieldResult(field="Condition Rating", priority="HIGH",
+                          status=RAGStatus.MISSING, note="No survey document provided")
+
+    exec_r = getattr(su, "condition_rating_executive", None) if not isinstance(su, dict) else su.get("condition_rating_executive")
+    actual_r = getattr(su, "condition_rating_actual", None) if not isinstance(su, dict) else su.get("condition_rating_actual")
+
+    if exec_r and actual_r:
+        status = RAGStatus.GREEN if norm_str(exec_r) == norm_str(actual_r) else RAGStatus.RED
+        note = f"Executive summary: {exec_r} | Signed ranking: {actual_r}" if status == RAGStatus.RED else None
+    elif exec_r or actual_r:
+        status = RAGStatus.AMBER
+        note = "Only one rating found — verify consistency"
+    else:
+        status = RAGStatus.MISSING
+        note = "No condition rating extracted"
+
+    return FieldResult(
+        field="Condition Rating", priority="HIGH",
+        survey=f"Exec: {exec_r} / Ranking: {actual_r}",
+        status=status, note=note
+    )
+
+
+def check_household(models: dict) -> FieldResult:
+    def get(m, *keys):
+        if m is None: return None
+        for k in keys:
+            v = getattr(m, k, None) if not isinstance(m, dict) else m.get(k)
+            if v: return str(v)
+        return None
+
+    sub_comp = get(models.get("submission"), "household_composition")
+    sub_adults = get(models.get("submission"), "total_occupants")
+    sub_dep = get(models.get("submission"), "num_dependants")
+
+    q_adults = get(models.get("questionnaire"), "adults")
+    q_dep    = get(models.get("questionnaire"), "dependents")
+    q_comp   = get(models.get("questionnaire"), "household_composition")
+
+    # Build comparable strings
+    sub_str = f"{sub_comp} ({sub_adults} occupants, {sub_dep} dependants)" if sub_comp else sub_adults
+    q_str   = f"Adults:{q_adults} Dependents:{q_dep}" if q_adults else q_comp
+
+    status = RAGStatus.AMBER
+    note = None
+
+    if sub_dep and q_dep:
+        sub_dep_num = norm_numeric(sub_dep)
+        q_dep_num   = norm_numeric(q_dep)
+        if sub_dep_num is not None and q_dep_num is not None:
+            status = RAGStatus.GREEN if sub_dep_num == q_dep_num else RAGStatus.RED
+            if status == RAGStatus.RED:
+                note = f"Submission: {sub_dep} dependants | Questionnaire: {q_dep} dependants"
+
+    return FieldResult(
+        field="Household Composition", priority="HIGH",
+        submission=sub_str, questionnaire=q_str,
+        status=status, note=note
+    )
+
+
+def check_both_borrowers(models: dict) -> FieldResult:
+    def get(m, key):
+        if m is None: return None
+        return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+    sub_val = get(models.get("submission"), "both_borrowers_mtr")
+    q_val   = get(models.get("questionnaire"), "both_borrowers_mtr")
+
+    if sub_val and q_val:
+        status = RAGStatus.GREEN if norm_str(sub_val) == norm_str(q_val) else RAGStatus.RED
+    elif sub_val or q_val:
+        status = RAGStatus.AMBER
+    else:
+        status = RAGStatus.MISSING
+
+    return FieldResult(
+        field="Both Borrowers MTR", priority="HIGH",
+        submission=sub_val, questionnaire=q_val, status=status
+    )
+
+
+def check_consent(models: dict) -> FieldResult:
+    def get(m, key):
+        if m is None: return None
+        return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+    sub_val = get(models.get("submission"), "both_consented")
+    q_val   = get(models.get("questionnaire"), "consented_sale")
+
+    status = RAGStatus.GREEN
+    if sub_val and q_val:
+        status = RAGStatus.GREEN if norm_str(sub_val)[0] == norm_str(q_val)[0] else RAGStatus.RED
+    elif not sub_val and not q_val:
+        status = RAGStatus.MISSING
+
+    return FieldResult(
+        field="Consent to Sale", priority="HIGH",
+        submission=sub_val, questionnaire=q_val, status=status
+    )
+
+
+def check_works_count(models: dict) -> tuple[FieldResult, list[WorkItem]]:
+    su = models.get("survey")
+    w  = models.get("works")
+
+    survey_items = (getattr(su, "works_items", []) if not isinstance(su, dict)
+                   else su.get("works_items", [])) or []
+    works_items  = (getattr(w, "works_items", []) if not isinstance(w, dict)
+                   else w.get("works_items", [])) or []
+
+    survey_count = len(survey_items) if survey_items else (
+        int(getattr(su, "works_count", 0) or 0) if not isinstance(su, dict) else
+        int(su.get("works_count", 0) or 0)
+    )
+    works_count = len(works_items)
+
+    if survey_count == 0 and works_count == 0:
+        status = RAGStatus.MISSING
+        note = "No works items found in either document"
+    elif survey_count == works_count:
+        status = RAGStatus.GREEN
+        note = None
+    else:
+        diff = abs(survey_count - works_count)
+        status = RAGStatus.AMBER if diff <= 2 else RAGStatus.RED
+        note = f"Survey: {survey_count} items | List of Works: {works_count} items"
+
+    field_result = FieldResult(
+        field="Works Items Count", priority="HIGH",
+        survey=str(survey_count) if survey_count else None,
+        works=str(works_count) if works_count else None,
+        status=status, note=note
+    )
+
+    # Build work item reconciliation
+    work_items_out = []
+    all_items = list(set(survey_items + works_items))
+    for i, item in enumerate(all_items[:30], 1):  # cap at 30
+        in_s = any(fuzzy_match(item, si, 75) for si in survey_items)
+        in_w = any(fuzzy_match(item, wi, 75) for wi in works_items)
+        if in_s and in_w:
+            item_status = RAGStatus.GREEN
+        elif in_s or in_w:
+            item_status = RAGStatus.AMBER
+        else:
+            item_status = RAGStatus.MISSING
+        work_items_out.append(WorkItem(
+            number=i, description=item[:120],
+            in_survey=in_s, in_works=in_w, status=item_status
+        ))
+
+    return field_result, work_items_out
+
+
+def check_fire_safety(models: dict) -> FieldResult:
+    su = models.get("survey")
+    fire_issues = (getattr(su, "fire_safety_issues", None) if not isinstance(su, dict)
+                  else su.get("fire_safety_issues")) if su else None
+
+    if fire_issues:
+        status = RAGStatus.RED
+        note = f"⚠ Fire safety issue in survey: {str(fire_issues)[:100]}"
+    else:
+        status = RAGStatus.GREEN
+        note = None
+
+    return FieldResult(
+        field="Fire Safety Issues", priority="HIGH",
+        survey=fire_issues, status=status, note=note
+    )
+
+
+# ─── Issue generator ─────────────────────────────────────────────────────────
+
+def generate_issues(fields: list[FieldResult], models: dict) -> list[Issue]:
+    """Generate human-readable issues from RED/AMBER fields."""
+    issues = []
+    for f in fields:
+        if f.status == RAGStatus.RED:
+            issues.append(Issue(
+                severity=RAGStatus.RED,
+                title=f"RED: {f.field}",
+                description=f.note or f"Conflict detected across documents for {f.field}.",
+                source=f"Fields: submission={f.submission} | valuation={f.valuation} | survey={f.survey} | questionnaire={f.questionnaire}"
+            ))
+        elif f.status == RAGStatus.AMBER:
+            issues.append(Issue(
+                severity=RAGStatus.AMBER,
+                title=f"AMBER: {f.field}",
+                description=f.note or f"Minor issue or missing data for {f.field}.",
+                source=f"Check documents for this field."
+            ))
+    return issues
+
+
+# ─── Main reconcile function ──────────────────────────────────────────────────
+
+def reconcile(models: dict, property_ref: str = "Unknown") -> BatchResult:
+    """
+    Run full reconciliation across all extracted document models.
+    Returns a BatchResult with RAG status per field.
+    """
+    fields = []
+    processing_notes = []
+
+    # Check which documents are present
+    doc_summary = {
+        "submission":    "submission" in models and "error" not in str(models.get("submission", {})),
+        "valuation":     "valuation" in models and "error" not in str(models.get("valuation", {})),
+        "survey":        "survey" in models and "error" not in str(models.get("survey", {})),
+        "questionnaire": "questionnaire" in models and "error" not in str(models.get("questionnaire", {})),
+        "works":         "works" in models and "error" not in str(models.get("works", {})),
+    }
+
+    missing_docs = [k for k, v in doc_summary.items() if not v]
+    if missing_docs:
+        processing_notes.append(f"Missing documents: {', '.join(missing_docs)}")
+
+    # Run all field checks
+    fields.append(check_address(models))
+    fields.append(check_eircode(models))
+    fields.append(check_applicant_name(models))
+    fields.append(check_folio(models))
+    fields.append(check_bedrooms(models))
+    fields.append(check_property_type(models))
+    fields.append(check_omv(models))
+    fields.append(check_rental(models))
+    fields.append(check_condition_rating(models))
+    fields.append(check_household(models))
+    fields.append(check_both_borrowers(models))
+    fields.append(check_consent(models))
+    works_field, work_items = check_works_count(models)
+    fields.append(works_field)
+    fields.append(check_fire_safety(models))
+
+    # Determine address for result
+    sub = models.get("submission")
+    address = (getattr(sub, "address", None) if not isinstance(sub, dict)
+               else sub.get("address", "Unknown Property")) or "Unknown Property"
+
+    # Count statuses
+    red   = sum(1 for f in fields if f.status == RAGStatus.RED)
+    amber = sum(1 for f in fields if f.status == RAGStatus.AMBER)
+    green = sum(1 for f in fields if f.status == RAGStatus.GREEN)
+
+    overall = RAGStatus.RED if red > 0 else (RAGStatus.AMBER if amber > 0 else RAGStatus.GREEN)
+
+    issues = generate_issues(fields, models)
+
+    return BatchResult(
+        property_ref=property_ref,
+        address=address,
+        overall_status=overall,
+        red_count=red,
+        amber_count=amber,
+        green_count=green,
+        fields=fields,
+        issues=issues,
+        works_reconciliation=work_items,
+        doc_summary=doc_summary,
+        processing_notes=processing_notes
+    )
