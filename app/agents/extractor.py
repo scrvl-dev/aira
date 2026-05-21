@@ -13,10 +13,20 @@ from app.schemas.models import (
 )
 
 
+# Current Claude model for extraction (claude-sonnet-4-20250514 is deprecated, EOL 2026-06-15)
+EXTRACTION_MODEL = "claude-sonnet-4-6"
+
+
+class ExtractionAPIError(RuntimeError):
+    """Raised when the Claude API itself fails (auth, connection, bad model, rate
+    limit). Distinct from a per-document data/JSON problem — this aborts the batch
+    so the failure is surfaced to the user instead of masquerading as a false RED."""
+
+
 def get_client() -> anthropic.Anthropic:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        raise ValueError("ANTHROPIC_API_KEY environment variable not set")
+        raise ExtractionAPIError("ANTHROPIC_API_KEY environment variable not set")
     return anthropic.Anthropic(api_key=api_key)
 
 
@@ -93,7 +103,7 @@ def extract_fields_from_doc(doc_type: str, text: str) -> dict:
     
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model=EXTRACTION_MODEL,
             max_tokens=2000,
             system=SYSTEM_PROMPTS[doc_type],
             messages=[{
@@ -101,22 +111,30 @@ def extract_fields_from_doc(doc_type: str, text: str) -> dict:
                 "content": f"Extract all fields from this document:\n\n{text}"
             }]
         )
-        
-        raw = response.content[0].text.strip()
-        
-        # Clean up any markdown fences
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        raw = raw.strip()
-        
+    except anthropic.AuthenticationError as e:
+        raise ExtractionAPIError(
+            "Claude API authentication failed (401 — invalid x-api-key). "
+            "Check that ANTHROPIC_API_KEY is a valid key from console.anthropic.com."
+        ) from e
+    except anthropic.APIError as e:
+        # Bad model, rate limit, overloaded, connection — all abort the batch
+        # so the user sees the real cause instead of an empty false-RED report.
+        raise ExtractionAPIError(f"Claude API error during extraction: {e}") from e
+
+    raw = response.content[0].text.strip()
+
+    # Clean up any markdown fences
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+
+    # A malformed JSON response is a per-document data issue, not a batch failure.
+    try:
         return json.loads(raw)
-    
     except json.JSONDecodeError as e:
         return {"error": f"JSON parse error: {e}", "raw": raw[:500]}
-    except Exception as e:
-        return {"error": f"Extraction error: {str(e)}"}
 
 
 def extract_all(parsed_docs: dict[str, str]) -> dict[str, dict]:

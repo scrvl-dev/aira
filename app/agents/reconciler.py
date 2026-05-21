@@ -44,6 +44,16 @@ def norm_numeric(s) -> Optional[float]:
         return None
 
 
+def norm_int(s) -> Optional[int]:
+    """Extract the first integer from a value like '4' or '4 bedrooms' → 4.
+    Returns None for free text such as 'not clearly legible' so unreadable
+    (e.g. scanned-doc) values are ignored rather than crashing the reconciler."""
+    if s is None:
+        return None
+    m = re.search(r"\d+", str(s))
+    return int(m.group()) if m else None
+
+
 def fuzzy_match(a: str, b: str, threshold: int = 80) -> bool:
     """Fuzzy string match using rapidfuzz if available."""
     if not a or not b:
@@ -223,7 +233,8 @@ def check_bedrooms(models: dict) -> FieldResult:
     def get(m, key):
         if m is None: return None
         v = getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
-        return str(int(float(v))) if v else None
+        n = norm_int(v)
+        return str(n) if n is not None else None
 
     beds = {
         "submission":    get(models.get("submission"), "bedrooms"),
@@ -432,8 +443,8 @@ def check_works_count(models: dict) -> tuple[FieldResult, list[WorkItem]]:
                    else w.get("works_items", [])) or []
 
     survey_count = len(survey_items) if survey_items else (
-        int(getattr(su, "works_count", 0) or 0) if not isinstance(su, dict) else
-        int(su.get("works_count", 0) or 0)
+        norm_int(getattr(su, "works_count", 0)) or 0 if not isinstance(su, dict) else
+        norm_int(su.get("works_count", 0)) or 0
     )
     works_count = len(works_items)
 
