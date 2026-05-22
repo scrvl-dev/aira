@@ -4,8 +4,9 @@ Produces a styled Excel control sheet from a BatchResult.
 Green/Amber/Red cell fills per field, issues log, works reconciliation.
 """
 import io
+import re
 from datetime import datetime
-from app.schemas.models import BatchResult, RAGStatus
+from app.schemas.models import BatchResult, RAGStatus, RunResult
 
 try:
     import openpyxl
@@ -275,6 +276,146 @@ def generate_excel(result: BatchResult) -> bytes:
         ws3.cell(i, 5).alignment = center()
 
     # Save to bytes
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output.read()
+
+
+# ─── Combined run workbook ─────────────────────────────────────────────────────
+
+def _safe_sheet_name(name: str, used: set) -> str:
+    """openpyxl sheet names: <=31 chars, no []:*?/\\ , unique."""
+    clean = re.sub(r"[\[\]:*?/\\]", " ", name).strip()[:28] or "Property"
+    candidate = clean
+    i = 2
+    while candidate in used:
+        candidate = f"{clean[:25]} {i}"
+        i += 1
+    used.add(candidate)
+    return candidate
+
+
+def _write_control_block(ws, result: BatchResult):
+    """Write a single property's field table into the given worksheet."""
+    ws.sheet_view.showGridLines = False
+    for col, width in {"A": 26, "B": 7, "C": 26, "D": 24, "E": 24, "F": 24, "G": 18, "H": 9, "I": 32}.items():
+        ws.column_dimensions[col].width = width
+
+    ws.merge_cells("A1:I1")
+    ws["A1"].value = f"{result.address}   |   {result.doc_completeness} docs   |   confidence: {result.cluster_confidence}"
+    ws["A1"].fill = hex_fill("0C0F0E")
+    ws["A1"].font = Font(color="22C55E", bold=True, size=12, name="Courier New")
+    ws["A1"].alignment = center()
+    ws.row_dimensions[1].height = 26
+
+    sc = {RAGStatus.RED: ("450A0A", "EF4444"), RAGStatus.AMBER: ("451A03", "F59E0B"),
+          RAGStatus.GREEN: ("1A4731", "22C55E")}.get(result.overall_status, ("1C2320", "4A5C54"))
+    ws.merge_cells("A2:I2")
+    ws["A2"].value = f"OVERALL: {result.overall_status.value} — {result.red_count} RED  {result.amber_count} AMBER  {result.green_count} GREEN"
+    ws["A2"].fill = hex_fill(sc[0])
+    ws["A2"].font = Font(color=sc[1], bold=True, size=10, name="Courier New")
+    ws["A2"].alignment = center()
+
+    headers = ["FIELD", "PRI", "SUBMISSION", "VALUATION", "SURVEY", "QUESTIONNAIRE", "WORKS", "RAG", "NOTE / VERIFY"]
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col_idx, value=header)
+        cell.fill = hex_fill("1C2320")
+        cell.font = Font(color="4A5C54", bold=True, size=8, name="Courier New")
+        cell.alignment = center()
+        cell.border = thin_border()
+
+    for row_idx, field in enumerate(result.fields, 4):
+        ws.row_dimensions[row_idx].height = 26
+        bg = "141918" if row_idx % 2 == 0 else "1C2320"
+        rag = field.status
+        note = field.note or ""
+        if field.needs_verify:
+            note = ("⚠ VERIFY (scanned source) " + note).strip()
+        row_data = [field.field, field.priority[:4], field.submission or "—",
+                    field.valuation or "—", field.survey or "—", field.questionnaire or "—",
+                    field.works or "—", rag.value, note]
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=str(value)[:200] if value else "")
+            cell.border = thin_border()
+            if col_idx == 8:
+                c = COLOURS[rag]
+                cell.fill = hex_fill(c["fill"]); cell.font = Font(color=c["font"], bold=True, size=9, name="Courier New"); cell.alignment = center()
+            elif col_idx in (3, 4, 5, 6, 7):
+                cell.fill = hex_fill(bg); cell.font = Font(color=COLOURS[rag]["font"], size=9, name="Courier New"); cell.alignment = left()
+            elif col_idx == 9:
+                cell.fill = hex_fill(bg)
+                cell.font = Font(color="F59E0B" if (field.needs_verify or rag in (RAGStatus.RED, RAGStatus.AMBER)) else "6B7C74", size=8, name="Courier New", italic=True)
+                cell.alignment = left()
+            else:
+                cell.fill = hex_fill(bg); cell.font = Font(color="E5EDE8" if col_idx == 1 else "6B7C74", size=9, name="Courier New", bold=(col_idx == 1)); cell.alignment = left()
+
+
+def generate_combined_excel(run: RunResult) -> bytes:
+    """One workbook for a whole run: a summary sheet + one control sheet per property."""
+    if not HAS_OPENPYXL:
+        raise ImportError("openpyxl not installed")
+
+    wb = openpyxl.Workbook()
+
+    # ── Summary sheet ──
+    ws = wb.active
+    ws.title = "Run Summary"
+    ws.sheet_view.showGridLines = False
+    for col, width in {"A": 5, "B": 44, "C": 10, "D": 12, "E": 8, "F": 8, "G": 8, "H": 12}.items():
+        ws.column_dimensions[col].width = width
+
+    ws.merge_cells("A1:H1")
+    ws["A1"].value = "IRISH HOMES — MTR BATCH REVIEW  ·  RUN SUMMARY"
+    ws["A1"].fill = hex_fill("0C0F0E")
+    ws["A1"].font = Font(color="22C55E", bold=True, size=13, name="Courier New")
+    ws["A1"].alignment = center()
+    ws.row_dimensions[1].height = 30
+
+    ws.merge_cells("A2:H2")
+    ws["A2"].value = (f"Run {run.run_id}  |  {run.created_at}  |  {run.total_files} files  |  "
+                      f"{run.properties_found} properties  |  {run.red_properties} RED · "
+                      f"{run.amber_properties} AMBER · {run.green_properties} GREEN")
+    ws["A2"].fill = hex_fill("141918")
+    ws["A2"].font = Font(color="6B7C74", size=9, name="Courier New")
+    ws["A2"].alignment = center()
+
+    headers = ["#", "PROPERTY", "DOCS", "CONFIDENCE", "RED", "AMBER", "GREEN", "OVERALL"]
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col_idx, value=header)
+        cell.fill = hex_fill("1C2320")
+        cell.font = Font(color="4A5C54", bold=True, size=8, name="Courier New")
+        cell.alignment = center(); cell.border = thin_border()
+
+    used_names = {"Run Summary"}
+    row = 4
+    for i, b in enumerate(run.batches, 1):
+        bg = "141918" if row % 2 == 0 else "1C2320"
+        c = COLOURS[b.overall_status]
+        vals = [i, b.address, b.doc_completeness, b.cluster_confidence,
+                b.red_count, b.amber_count, b.green_count, b.overall_status.value]
+        for col_idx, v in enumerate(vals, 1):
+            cell = ws.cell(row=row, column=col_idx, value=v)
+            cell.border = thin_border()
+            if col_idx == 8:
+                cell.fill = hex_fill(c["fill"]); cell.font = Font(color=c["font"], bold=True, size=9, name="Courier New"); cell.alignment = center()
+            else:
+                cell.fill = hex_fill(bg); cell.font = Font(color="E5EDE8" if col_idx == 2 else "6B7C74", size=9, name="Courier New"); cell.alignment = left() if col_idx == 2 else center()
+        row += 1
+
+    if run.unassigned:
+        row += 1
+        ws.cell(row=row, column=1, value="UNASSIGNED FILES (need a human)").font = Font(color="F59E0B", bold=True, size=9, name="Courier New")
+        row += 1
+        for u in run.unassigned:
+            ws.cell(row=row, column=2, value=f"{u.filename}  —  {u.reason}").font = Font(color="A0B0A8", size=8, name="Courier New")
+            row += 1
+
+    # ── One control sheet per property ──
+    for b in run.batches:
+        sheet_name = _safe_sheet_name(b.address or b.batch_id, used_names)
+        _write_control_block(wb.create_sheet(sheet_name), b)
+
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)

@@ -88,28 +88,46 @@ Return ONLY valid JSON, no markdown."""
 }
 
 
-def extract_fields_from_doc(doc_type: str, text: str) -> dict:
-    """Extract structured fields from a document using Claude."""
+def extract_fields_from_doc(doc_type: str, text: str,
+                            images: Optional[list[str]] = None) -> dict:
+    """Extract structured fields from a document using Claude.
+
+    When `images` (base64 PNG strings) are supplied, the document is read with
+    Claude's vision model — used for scanned/handwritten PDFs that have no usable
+    embedded text.
+    """
     if doc_type not in SYSTEM_PROMPTS:
         return {"error": f"No extraction prompt for doc type: {doc_type}"}
-    
+
     client = get_client()
-    
-    # Trim text to avoid token limits (keep most important parts)
-    max_chars = 15000
-    if len(text) > max_chars:
-        # Keep first 10k + last 5k (catch both header and summary)
-        text = text[:10000] + "\n...[middle truncated]...\n" + text[-5000:]
-    
+
+    if images:
+        # Vision path: send page images instead of (empty/garbled) text.
+        content = [
+            {"type": "image",
+             "source": {"type": "base64", "media_type": "image/png", "data": img}}
+            for img in images
+        ]
+        content.append({
+            "type": "text",
+            "text": ("This document was scanned. Read the page image(s) carefully "
+                     "and extract all fields. If a value is genuinely illegible, "
+                     "use null — do not guess."),
+        })
+        user_content = content
+    else:
+        # Text path: trim to avoid token limits (keep header + summary).
+        max_chars = 15000
+        if len(text) > max_chars:
+            text = text[:10000] + "\n...[middle truncated]...\n" + text[-5000:]
+        user_content = f"Extract all fields from this document:\n\n{text}"
+
     try:
         response = client.messages.create(
             model=EXTRACTION_MODEL,
             max_tokens=2000,
             system=SYSTEM_PROMPTS[doc_type],
-            messages=[{
-                "role": "user",
-                "content": f"Extract all fields from this document:\n\n{text}"
-            }]
+            messages=[{"role": "user", "content": user_content}]
         )
     except anthropic.AuthenticationError as e:
         raise ExtractionAPIError(

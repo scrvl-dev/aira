@@ -20,6 +20,7 @@ class FieldResult(BaseModel):
     works: Optional[str] = None
     status: RAGStatus
     note: Optional[str] = None
+    needs_verify: bool = False  # value drew on a scanned/OCR'd source — eyeball it
 
 
 class Issue(BaseModel):
@@ -136,4 +137,32 @@ class BatchResult(BaseModel):
     issues: List[Issue]
     works_reconciliation: List[WorkItem]
     doc_summary: dict
+    processing_notes: List[str] = Field(default_factory=list)
+    # ── Multi-batch / run context ──
+    batch_id: str = ""
+    doc_completeness: str = ""        # e.g. "4/5"
+    cluster_confidence: str = "high"  # high / medium / low
+    ocr_docs: List[str] = Field(default_factory=list)   # doc types read via OCR
+    source_files: List[str] = Field(default_factory=list)
+
+
+class UnassignedFile(BaseModel):
+    """A file the agent parsed but could not place into any property batch."""
+    filename: str
+    detected_type: str = "unknown"
+    reason: str = "No matching property identity (address / eircode / folio)"
+
+
+class RunResult(BaseModel):
+    """A whole upload run: many property batches auto-grouped from a pile of files."""
+    run_id: str
+    created_at: str
+    total_files: int
+    properties_found: int
+    batches: List[BatchResult] = Field(default_factory=list)
+    unassigned: List[UnassignedFile] = Field(default_factory=list)
+    # Per-property RAG roll-up
+    green_properties: int = 0
+    amber_properties: int = 0
+    red_properties: int = 0
     processing_notes: List[str] = Field(default_factory=list)

@@ -33,6 +33,22 @@ def norm_eircode(s) -> str:
     return re.sub(r"\s+", "", str(s)).upper()
 
 
+# Irish eircode: routing key (letter + 2 alnum) + 4-char unique identifier.
+_EIRCODE_RE = re.compile(r"[A-Za-z]\d[\dA-Za-z]\s?[A-Za-z0-9]{4}")
+
+
+def extract_eircode(s) -> str:
+    """Pull a real eircode out of a string (e.g. an address line), normalised.
+
+    Returns "" when no eircode pattern is present — so a plain address is never
+    mistaken for an eircode.
+    """
+    if s is None:
+        return ""
+    m = _EIRCODE_RE.search(str(s))
+    return norm_eircode(m.group()) if m else ""
+
+
 def norm_numeric(s) -> Optional[float]:
     """Extract numeric value from string like '€405,000' → 405000.0"""
     if s is None:
@@ -126,12 +142,16 @@ def check_eircode(models: dict) -> FieldResult:
         if m is None: return None
         return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
 
+    def src_eircode(m):
+        # Prefer an explicit eircode field; otherwise pull one out of the address.
+        return extract_eircode(get(m, "eircode")) or extract_eircode(get(m, "address"))
+
     vals = {
-        "submission": norm_eircode(get(models.get("submission"), "eircode")),
-        "valuation":  norm_eircode(get(models.get("valuation"), "eircode")),
-        "survey":     norm_eircode(get(models.get("survey"), "eircode") or get(models.get("survey"), "address")),
-        "questionnaire": norm_eircode(get(models.get("questionnaire"), "eircode")),
-        "works":      norm_eircode(get(models.get("works"), "address")),
+        "submission":    src_eircode(models.get("submission")),
+        "valuation":     src_eircode(models.get("valuation")),
+        "survey":        src_eircode(models.get("survey")),
+        "questionnaire": src_eircode(models.get("questionnaire")),
+        "works":         src_eircode(models.get("works")),
     }
 
     non_null = [v for v in vals.values() if v]

@@ -18,11 +18,9 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from app.agents.parser import parse_batch
-from app.agents.extractor import extract_all, to_typed_models
-from app.agents.reconciler import reconcile
-from app.agents.reporter import generate_excel
-from app.schemas.models import BatchResult
+from app.agents.pipeline import process_run
+from app.agents.reporter import generate_excel, generate_combined_excel
+from app.schemas.models import RunResult, BatchResult
 
 
 # ─── App setup ───────────────────────────────────────────────────────────────
@@ -94,51 +92,48 @@ async def health():
     return {"status": "ok", "service": "ih-batch-review"}
 
 
+MAX_FILES = 60
+
+
 @app.post("/api/review")
 async def review_batch(files: list[UploadFile] = File(...)):
-    """
-    Upload 5 documents for a single property.
-    Returns job_id for SSE progress tracking.
+    """Upload a pile of mixed documents (one or many properties).
+
+    The agent auto-groups them into property batches. Returns a run_id for SSE
+    progress tracking.
     """
     if not files:
         raise HTTPException(400, "No files uploaded")
-    if len(files) > 10:
-        raise HTTPException(400, "Maximum 10 files per batch")
+    if len(files) > MAX_FILES:
+        raise HTTPException(400, f"Maximum {MAX_FILES} files per run")
 
-    # Check API key
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise HTTPException(500, "ANTHROPIC_API_KEY not configured")
 
-    job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {
-        "status": "queued",
-        "progress": 0,
-        "steps": [],
-        "result": None,
-        "error": None,
+    run_id = str(uuid.uuid4())[:8]
+    jobs[run_id] = {
+        "status": "queued", "progress": 0, "steps": [],
+        "result": None, "run_obj": None, "error": None,
     }
 
     # Read files into memory immediately (before async handoff)
     file_data = {}
     for f in files:
-        content = await f.read()
-        file_data[f.filename] = content
+        file_data[f.filename] = await f.read()
 
-    # Kick off processing in background
-    asyncio.create_task(process_batch(job_id, file_data))
-
-    return {"job_id": job_id}
+    asyncio.create_task(process_run_job(run_id, file_data))
+    return {"run_id": run_id}
 
 
-@app.get("/api/progress/{job_id}")
-async def progress_stream(job_id: str):
-    """SSE stream for real-time job progress."""
-    if job_id not in jobs:
-        raise HTTPException(404, f"Job {job_id} not found")
+@app.get("/api/progress/{run_id}")
+async def progress_stream(run_id: str):
+    """SSE stream for real-time run progress."""
+    if run_id not in jobs:
+        raise HTTPException(404, f"Run {run_id} not found")
 
     async def event_generator():
         while True:
-            job = jobs.get(job_id, {})
+            job = jobs.get(run_id, {})
             data = {
                 "status": job.get("status"),
                 "progress": job.get("progress", 0),
@@ -146,7 +141,6 @@ async def progress_stream(job_id: str):
                 "error": job.get("error"),
             }
             yield f"data: {json.dumps(data)}\n\n"
-
             if job.get("status") in ("complete", "error"):
                 break
             await asyncio.sleep(0.5)
@@ -158,111 +152,103 @@ async def progress_stream(job_id: str):
     )
 
 
-@app.get("/api/result/{job_id}")
-async def get_result(job_id: str):
-    """Get the full JSON result for a completed job."""
-    job = jobs.get(job_id)
+@app.get("/api/run/{run_id}")
+async def get_run(run_id: str):
+    """Full run result — summary, all property batches, unassigned files."""
+    job = jobs.get(run_id)
     if not job:
-        raise HTTPException(404, "Job not found")
+        raise HTTPException(404, "Run not found")
     if job["status"] != "complete":
-        raise HTTPException(400, f"Job not complete. Status: {job['status']}")
+        raise HTTPException(400, f"Run not complete. Status: {job['status']}")
     return job["result"]
 
 
-@app.get("/api/download/{job_id}")
-async def download_excel(job_id: str):
-    """Download the Excel control sheet for a completed job."""
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404, "Job not found")
-    if job["status"] != "complete":
-        raise HTTPException(400, "Job not complete")
-    if "excel_bytes" not in job:
-        raise HTTPException(400, "Excel not generated")
+def _find_batch(run_id: str, batch_id: str) -> BatchResult:
+    job = jobs.get(run_id)
+    if not job or job["status"] != "complete" or not job.get("run_obj"):
+        raise HTTPException(404, "Run not found or not complete")
+    for b in job["run_obj"].batches:
+        if b.batch_id == batch_id:
+            return b
+    raise HTTPException(404, "Property batch not found")
 
-    excel_bytes = job["excel_bytes"]
-    result = job["result"]
-    filename = f"IH_Control_Sheet_{job_id}.xlsx"
 
+@app.get("/api/result/{run_id}/{batch_id}")
+async def get_batch_result(run_id: str, batch_id: str):
+    """One property's full reconciliation detail."""
+    return _find_batch(run_id, batch_id).model_dump()
+
+
+def _xlsx_response(data: bytes, filename: str) -> StreamingResponse:
     return StreamingResponse(
-        iter([excel_bytes]),
+        iter([data]),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
 
-@app.get("/api/jobs")
-async def list_jobs():
-    """List all jobs (for dashboard)."""
+@app.get("/api/download/{run_id}/{batch_id}")
+async def download_batch_excel(run_id: str, batch_id: str):
+    """Download one property's control sheet."""
+    batch = _find_batch(run_id, batch_id)
+    data = await asyncio.get_event_loop().run_in_executor(None, generate_excel, batch)
+    return _xlsx_response(data, f"IH_Control_Sheet_{batch_id}.xlsx")
+
+
+@app.get("/api/download/{run_id}")
+async def download_run_excel(run_id: str):
+    """Download the whole run as one workbook (summary + one sheet per property)."""
+    job = jobs.get(run_id)
+    if not job or job["status"] != "complete" or not job.get("run_obj"):
+        raise HTTPException(404, "Run not found or not complete")
+    data = await asyncio.get_event_loop().run_in_executor(
+        None, generate_combined_excel, job["run_obj"]
+    )
+    return _xlsx_response(data, f"IH_Batch_Review_{run_id}.xlsx")
+
+
+@app.get("/api/runs")
+async def list_runs():
+    """List all runs (lightweight)."""
     return [
         {
-            "job_id": jid,
+            "run_id": rid,
             "status": j.get("status"),
             "progress": j.get("progress", 0),
-            "address": j.get("result", {}).get("address", "Unknown") if j.get("result") else "Processing...",
-            "overall_status": j.get("result", {}).get("overall_status") if j.get("result") else None,
+            "properties_found": (j.get("result") or {}).get("properties_found"),
+            "red_properties": (j.get("result") or {}).get("red_properties"),
         }
-        for jid, j in jobs.items()
+        for rid, j in jobs.items()
     ]
 
 
 # ─── Background processing ────────────────────────────────────────────────────
 
-async def process_batch(job_id: str, file_data: dict[str, bytes]):
-    """Full processing pipeline run as background task."""
-    job = jobs[job_id]
+async def process_run_job(run_id: str, file_data: dict[str, bytes]):
+    """Run the full multi-batch pipeline as a background task."""
+    job = jobs[run_id]
 
-    def update(status: str, progress: int, step: str):
-        job["status"] = status
-        job["progress"] = progress
-        job["steps"].append(step)
+    def on_progress(stage: str, pct: int, detail: str):
+        job["status"] = "running"
+        job["progress"] = pct
+        job["steps"].append(detail)
 
     try:
-        update("running", 10, f"Received {len(file_data)} files")
-
-        # Step 1: Parse documents
-        update("running", 20, "Parsing documents...")
-        parsed = await asyncio.get_event_loop().run_in_executor(
-            None, parse_batch, file_data
+        job["status"] = "running"
+        run: RunResult = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: process_run(file_data, on_progress, run_id=run_id)
         )
-        detected = [k for k in parsed if not k.startswith("error_")]
-        update("running", 35, f"Detected: {', '.join(detected)}")
-
-        # Step 2: Extract fields via Claude
-        update("running", 45, "Extracting fields with Claude AI...")
-        extracted = await asyncio.get_event_loop().run_in_executor(
-            None, extract_all, parsed
+        job["run_obj"] = run
+        job["result"] = run.model_dump()
+        job["progress"] = 100
+        job["status"] = "complete"
+        job["steps"].append(
+            f"Complete — {run.properties_found} properties: "
+            f"{run.red_properties} RED / {run.amber_properties} AMBER / {run.green_properties} GREEN"
         )
-        update("running", 65, f"Extracted fields from {len(extracted)} documents")
-
-        # Step 3: Convert to typed models
-        update("running", 70, "Validating extracted data...")
-        models = await asyncio.get_event_loop().run_in_executor(
-            None, to_typed_models, extracted
-        )
-
-        # Step 4: Reconcile
-        update("running", 80, "Running reconciliation checks...")
-        property_ref = f"BATCH-{job_id}"
-        result: BatchResult = await asyncio.get_event_loop().run_in_executor(
-            None, reconcile, models, property_ref
-        )
-        update("running", 90, f"Reconciliation complete: {result.red_count} RED, {result.amber_count} AMBER, {result.green_count} GREEN")
-
-        # Step 5: Generate Excel
-        update("running", 95, "Generating Excel control sheet...")
-        excel_bytes = await asyncio.get_event_loop().run_in_executor(
-            None, generate_excel, result
-        )
-
-        # Store results
-        job["result"] = result.model_dump()
-        job["excel_bytes"] = excel_bytes
-        update("complete", 100, f"Complete — {result.overall_status.value} overall status")
-
     except Exception as e:
         import traceback
         job["status"] = "error"
         job["error"] = str(e)
         job["steps"].append(f"ERROR: {str(e)}")
-        print(f"Job {job_id} failed: {traceback.format_exc()}")
+        print(f"Run {run_id} failed: {traceback.format_exc()}")
