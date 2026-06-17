@@ -25,10 +25,12 @@ from app.schemas.models import RunResult, BatchResult
 
 # ─── App setup ───────────────────────────────────────────────────────────────
 
+APP_VERSION = "2.0.0-batch-submission-procedure"
+
 app = FastAPI(
     title="Irish Homes MTR Batch Review Agent",
     description="AI-powered document reconciliation for MTR batch submissions",
-    version="1.0.0"
+    version=APP_VERSION
 )
 
 app.add_middleware(
@@ -89,7 +91,7 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "ih-batch-review"}
+    return {"status": "ok", "service": "ih-batch-review", "version": APP_VERSION}
 
 
 MAX_FILES = 60
