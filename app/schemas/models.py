@@ -38,6 +38,16 @@ class WorkItem(BaseModel):
     status: RAGStatus = RAGStatus.MISSING
 
 
+class Comparable(BaseModel):
+    """A single sale/rental comparable from the Valuation (Q12/Q14)."""
+    kind: Optional[str] = None          # "sale" or "rental"
+    address: Optional[str] = None
+    property_type: Optional[str] = None
+    bedrooms: Optional[str] = None
+    date: Optional[str] = None          # date let or sold
+    price: Optional[str] = None
+
+
 class SubmissionData(BaseModel):
     lender: Optional[str] = None
     borrower_1: Optional[str] = None
@@ -61,6 +71,10 @@ class SubmissionData(BaseModel):
     over_accommodation: Optional[str] = None
     aged_65_over: Optional[str] = None
     social_housing_support_number: Optional[str] = None
+    # ── Batch Submission Procedure (Amendments sheet) ──
+    q2_expression_of_interest: Optional[str] = None   # SS Q2 — must be "No"
+    q3_pre_assigned: Optional[str] = None             # SS Q3 — must be "Yes"
+    unanswered_questions: Optional[List[str]] = None  # blank questions (None = not checked, [] = all answered)
 
 
 class ValuationData(BaseModel):
@@ -78,6 +92,9 @@ class ValuationData(BaseModel):
     condition: Optional[str] = None
     letting_demand: Optional[str] = None
     folio: Optional[str] = None
+    # ── Comparables (Q12 Property Demand / Q14 General Notes) ──
+    sale_comparables: Optional[List[Comparable]] = None    # None = not extracted
+    rental_comparables: Optional[List[Comparable]] = None
 
 
 class SurveyData(BaseModel):
@@ -117,6 +134,14 @@ class QuestionnaireData(BaseModel):
     signed_date: Optional[str] = None
     development_taken_in_charge: Optional[str] = None
     estate_maintained_by: Optional[str] = None
+    # ── Batch Submission Procedure (Amendments sheet) ──
+    q1_mtr_application: Optional[str] = None    # PQ Q1a/b (New) / Q11 (Old) — must be "Yes"
+    manco_present: Optional[str] = None         # PQ Q8 (New) / Q5 (Old) — is there a management company?
+    manco_name: Optional[str] = None
+    manco_annual_charge: Optional[str] = None
+    manco_arrears: Optional[str] = None
+    signed: Optional[str] = None                # signed yes/no (signed_date already present)
+    unanswered_questions: Optional[List[str]] = None  # None = not checked, [] = all answered
 
 
 class WorksData(BaseModel):

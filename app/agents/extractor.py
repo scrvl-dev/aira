@@ -38,7 +38,11 @@ lender, borrower_1, borrower_2, non_residing_borrower, both_borrowers_mtr,
 both_consented, folio, address, eircode, property_type, bedrooms,
 total_occupants, household_composition, num_dependants, open_market_value,
 market_rent, sale_price, negative_equity, positive_equity, over_accommodation,
-aged_65_over, social_housing_support_number.
+aged_65_over, social_housing_support_number,
+q2_expression_of_interest (the answer to "Expression of Interest Application" — Yes/No),
+q3_pre_assigned (the answer to "Pre-Assigned Application" — Yes/No),
+unanswered_questions (array of the exact question labels/numbers that are left BLANK —
+not answered and not marked 'N/A'. Return [] if every question is answered or marked N/A).
 Use null for missing fields. Strip currency symbols from numeric values (return as string number).
 Return ONLY valid JSON, no markdown.""",
 
@@ -47,8 +51,13 @@ These are formal valuation documents from registered valuers.
 Extract ALL fields. Return ONLY a JSON object with these exact keys:
 applicant, address, eircode, bedrooms, property_type, open_market_value,
 rebuilding_cost, rental, floor_area_sqm, inspection_date, valuer, condition,
-letting_demand, folio.
+letting_demand, folio,
+sale_comparables, rental_comparables.
 For open_market_value: extract the "Market value (at present)" figure, NOT the rebuilding cost.
+sale_comparables and rental_comparables: look in Q12 (Property Demand) and Q14 (General Notes).
+Each is an array of objects with keys: address, property_type, bedrooms, date (the date the
+comparable was let or sold), price. Capture every comparable you can find (there should be
+about 3 of each). Use [] if a section genuinely has none — do not invent comparables.
 Strip currency symbols from numeric values (return as string number).
 Return ONLY valid JSON, no markdown.""",
 
@@ -74,7 +83,15 @@ applicant, address, eircode, bedrooms, property_type, total_occupants,
 adults, dependents, household_composition, registered_owner,
 both_borrowers_mtr, consented_sale, planning_extensions, flooding, pyrite,
 other_interest_party (yes/no), other_interest_name (name if yes, else null),
-signed_date, development_taken_in_charge, estate_maintained_by.
+signed_date, development_taken_in_charge, estate_maintained_by,
+q1_mtr_application (the answer to Q1 a/b in the new form, or Q11 in the old form, about the
+MTR application — Yes/No),
+manco_present (is there a Management Company? — Q8 new / Q5 old — Yes/No),
+manco_name, manco_annual_charge, manco_arrears (only if a management company exists, else null),
+signed (Yes/No — is the questionnaire signed),
+registered_owner (the registered owner / name on the Folio),
+unanswered_questions (array of question labels/numbers left BLANK — not answered and not
+marked 'N/A'. Return [] if every question is answered or marked N/A).
 Return ONLY valid JSON, no markdown.""",
 
     "works": """You extract structured data from Irish Homes List of Works documents.

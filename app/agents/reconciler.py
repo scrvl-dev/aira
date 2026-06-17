@@ -9,6 +9,7 @@ from app.schemas.models import (
     RAGStatus, FieldResult, Issue, WorkItem, BatchResult,
     SubmissionData, ValuationData, SurveyData, QuestionnaireData, WorksData
 )
+from app.agents.eircode_finder import verify_address
 
 try:
     from rapidfuzz import fuzz
@@ -119,8 +120,11 @@ def check_address(models: dict) -> FieldResult:
     }
 
     non_null = [v for v in vals.values() if v]
+    note = None
+    needs_verify = False
     if not non_null:
         status = RAGStatus.RED
+        note = "No address found in any document"
     elif len(non_null) == 1:
         status = RAGStatus.AMBER
     else:
@@ -128,12 +132,30 @@ def check_address(models: dict) -> FieldResult:
         base = non_null[0]
         all_match = all(fuzzy_match(base, other, 70) for other in non_null[1:])
         status = RAGStatus.GREEN if all_match else RAGStatus.AMBER
+        if not all_match:
+            note = "Addresses differ across documents"
+
+    # Procedure: address MUST match Eircode Finder (applies to every document).
+    base_addr = vals["submission"] or (non_null[0] if non_null else "")
+    sub = models.get("submission")
+    sub_ec = (getattr(sub, "eircode", None) if sub is not None and not isinstance(sub, dict)
+              else (sub.get("eircode") if isinstance(sub, dict) else None))
+    ec = (extract_eircode(sub_ec) or extract_eircode(base_addr)
+          or next((extract_eircode(x) for x in non_null if extract_eircode(x)), ""))
+    finder = verify_address(ec, base_addr)
+    if finder.get("checked"):
+        if finder.get("match") is False:
+            status = RAGStatus.RED
+        note = (note + " | " if note else "") + finder["note"]
+    else:
+        needs_verify = True
+        note = (note + " | " if note else "") + finder["note"]
 
     return FieldResult(
         field="Property Address", priority="CRITICAL",
         submission=vals["submission"], valuation=vals["valuation"],
         survey=vals["survey"], questionnaire=vals["questionnaire"], works=vals["works"],
-        status=status
+        status=status, note=note, needs_verify=needs_verify
     )
 
 
@@ -524,6 +546,212 @@ def check_fire_safety(models: dict) -> FieldResult:
     )
 
 
+# ─── Batch Submission Procedure checks (Amendments sheet) ────────────────────
+
+def _get(m, *keys):
+    if m is None:
+        return None
+    for k in keys:
+        v = getattr(m, k, None) if not isinstance(m, dict) else m.get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
+def _list(m, key):
+    if m is None:
+        return None
+    return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+
+def _yn(s):
+    """Normalise a yes/no/N-A answer. Returns 'yes'|'no'|'na'|'other'|None."""
+    if s is None:
+        return None
+    raw = str(s).strip().lower()
+    if raw == "":
+        return None
+    if "n/a" in raw or raw in ("na", "n.a", "n.a."):
+        return "na"
+    if raw[0] == "y":
+        return "yes"
+    if raw[0] == "n":
+        return "no"
+    return "other"
+
+
+def check_borrower_vs_folio(models: dict) -> FieldResult:
+    """Borrower name must match the Folio (registered owner). Procedure: SS borrower
+    must match PQ, V AND Folio. We match against the questionnaire's registered owner
+    (the name carried from the folio / Land Direct)."""
+    borrower = _get(models.get("submission"), "borrower_1") or \
+        _get(models.get("valuation"), "applicant") or \
+        _get(models.get("questionnaire"), "applicant")
+    folio_owner = _get(models.get("questionnaire"), "registered_owner")
+
+    if not borrower:
+        status, note = RAGStatus.AMBER, "No borrower name extracted"
+    elif not folio_owner:
+        status, note = RAGStatus.AMBER, "Folio registered owner not extracted — verify borrower matches Folio (Land Direct)"
+    elif fuzzy_match(borrower, folio_owner, 80):
+        status, note = RAGStatus.GREEN, None
+    else:
+        status, note = RAGStatus.RED, f"Borrower '{borrower}' does not match Folio registered owner '{folio_owner}'"
+
+    return FieldResult(field="Borrower Name vs Folio", priority="CRITICAL",
+                       submission=borrower, questionnaire=folio_owner, status=status, note=note)
+
+
+def check_all_answered(models: dict) -> FieldResult:
+    """ALL questions must be answered (use 'N/A' if not relevant) on SS and PQ."""
+    sub_u = _list(models.get("submission"), "unanswered_questions")
+    q_u = _list(models.get("questionnaire"), "unanswered_questions")
+    flagged, unknown = [], []
+    for label, u in (("SS", sub_u), ("PQ", q_u)):
+        if u is None:
+            unknown.append(label)
+        elif len(u) > 0:
+            flagged.append(f"{label}: {len(u)} blank")
+    if flagged:
+        status, note = RAGStatus.RED, "Unanswered questions — " + ", ".join(flagged) + " (add 'N/A' if not relevant)"
+    elif unknown:
+        status, note = RAGStatus.AMBER, f"Could not confirm all answered ({', '.join(unknown)}) — check no blank questions"
+    else:
+        status, note = RAGStatus.GREEN, "All questions answered"
+    return FieldResult(field="All Questions Answered (SS+PQ)", priority="HIGH",
+                       submission=(f"{len(sub_u)} blank" if sub_u else None),
+                       questionnaire=(f"{len(q_u)} blank" if q_u else None),
+                       status=status, note=note)
+
+
+def _value_rule(models: dict, doc: str, key: str, expected: str, label: str,
+                priority: str = "HIGH") -> FieldResult:
+    """Generic 'this question must say X' check."""
+    val = _get(models.get(doc), key)
+    yn = _yn(val)
+    cols = {"submission": None, "valuation": None, "questionnaire": None}
+    if doc in cols:
+        cols[doc] = val
+    if val is None:
+        status, note = RAGStatus.AMBER, f"Not extracted — confirm answer is '{expected.upper()}'"
+    elif yn == expected:
+        status, note = RAGStatus.GREEN, None
+    elif yn == "na":
+        status, note = RAGStatus.AMBER, f"Marked N/A — confirm should be '{expected.upper()}'"
+    else:
+        status, note = RAGStatus.RED, f"Answer is '{val}' — must be '{expected.upper()}'"
+    return FieldResult(field=label, priority=priority,
+                       submission=cols["submission"], valuation=cols["valuation"],
+                       questionnaire=cols["questionnaire"], status=status, note=note)
+
+
+def check_manco(models: dict) -> FieldResult:
+    """PQ Q8 (New)/Q5 (Old): if a Management Company exists, confirm name, annual charge and arrears."""
+    q = models.get("questionnaire")
+    present = _get(q, "manco_present")
+    yn = _yn(present)
+    name = _get(q, "manco_name")
+    charge = _get(q, "manco_annual_charge")
+    arrears = _get(q, "manco_arrears")
+    if present is None:
+        status, note = RAGStatus.AMBER, "Confirm whether a management company applies (PQ Q8/Q5)"
+    elif yn in ("no", "na"):
+        status, note = RAGStatus.GREEN, "No management company"
+    elif yn == "yes":
+        missing = [lbl for lbl, v in (("name", name), ("annual charge", charge), ("arrears", arrears)) if not v]
+        if missing:
+            status, note = RAGStatus.RED, "Management company present — missing: " + ", ".join(missing)
+        else:
+            status, note = RAGStatus.GREEN, f"{name} · charge {charge} · arrears {arrears}"
+    else:
+        status, note = RAGStatus.AMBER, f"Unclear management-company answer: '{present}'"
+    detail = "; ".join(x for x in [name, charge, arrears] if x) or present
+    return FieldResult(field="Management Company (PQ Q8/Q5)", priority="HIGH",
+                       questionnaire=detail, status=status, note=note)
+
+
+def check_pq_signed(models: dict) -> FieldResult:
+    """PQ must be signed and dated."""
+    q = models.get("questionnaire")
+    signed = _get(q, "signed")
+    date = _get(q, "signed_date")
+    if date or _yn(signed) == "yes":
+        status, note = RAGStatus.GREEN, (f"Dated {date}" if date else "Signed")
+    elif signed is None and date is None:
+        status, note = RAGStatus.AMBER, "Confirm PQ is signed and dated"
+    else:
+        status, note = RAGStatus.RED, "PQ not signed/dated"
+    return FieldResult(field="PQ Signed & Dated", priority="HIGH",
+                       questionnaire=(date or signed), status=status, note=note)
+
+
+def check_sale_price(models: dict) -> FieldResult:
+    """SS Q30 — Sale price of the property (from MTR Database)."""
+    sp = _get(models.get("submission"), "sale_price")
+    if sp:
+        status, note = RAGStatus.GREEN, "Verify matches MTR Database"
+    else:
+        status, note = RAGStatus.AMBER, "Add sale price from MTR Database (SS Q30)"
+    return FieldResult(field="Sale Price (SS Q30)", priority="HIGH",
+                       submission=sp, status=status, note=note)
+
+
+def check_comparables(models: dict) -> FieldResult:
+    """Valuation Q12/Q14: 3 sale + 3 rental comparables, each matching MTR property
+    type & beds, with a date let/sold."""
+    v = models.get("valuation")
+    sale = _list(v, "sale_comparables")
+    rent = _list(v, "rental_comparables")
+
+    if sale is None and rent is None:
+        return FieldResult(field="Valuation Comparables (3 sale + 3 rental)", priority="HIGH",
+                           valuation="not extracted", status=RAGStatus.AMBER,
+                           note="Verify 3 sale + 3 rental comparables (Q12/Q14), each matching type & beds with a let/sold date")
+
+    sale = sale or []
+    rent = rent or []
+    beds = norm_int(_get(models.get("submission"), "bedrooms") or _get(v, "bedrooms"))
+    ptype = _get(models.get("submission"), "property_type") or _get(v, "property_type")
+
+    problems = []
+    if len(sale) < 3:
+        problems.append(f"only {len(sale)} sale (need 3)")
+    if len(rent) < 3:
+        problems.append(f"only {len(rent)} rental (need 3)")
+
+    def cval(c, attr):
+        return getattr(c, attr, None) if not isinstance(c, dict) else c.get(attr)
+
+    no_date = 0
+    bed_mismatch = 0
+    type_mismatch = 0
+    for c in list(sale) + list(rent):
+        if not cval(c, "date"):
+            no_date += 1
+        cb = norm_int(cval(c, "bedrooms"))
+        if beds is not None and cb is not None and cb != beds:
+            bed_mismatch += 1
+        ct = cval(c, "property_type")
+        if ptype and ct and not fuzzy_match(ptype, ct, 70):
+            type_mismatch += 1
+    if no_date:
+        problems.append(f"{no_date} missing let/sold date")
+    if bed_mismatch:
+        problems.append(f"{bed_mismatch} with different beds")
+    if type_mismatch:
+        problems.append(f"{type_mismatch} with different property type")
+
+    if len(sale) < 3 or len(rent) < 3:
+        status = RAGStatus.RED
+    elif problems:
+        status = RAGStatus.AMBER
+    else:
+        status = RAGStatus.GREEN
+    note = "; ".join(problems) if problems else f"{len(sale)} sale + {len(rent)} rental — all match type, beds & dated"
+    return FieldResult(field="Valuation Comparables (3 sale + 3 rental)", priority="HIGH",
+                       valuation=f"{len(sale)} sale / {len(rent)} rental", status=status, note=note)
+
+
 # ─── Issue generator ─────────────────────────────────────────────────────────
 
 def generate_issues(fields: list[FieldResult], models: dict) -> list[Issue]:
@@ -586,6 +814,25 @@ def reconcile(models: dict, property_ref: str = "Unknown") -> BatchResult:
     works_field, work_items = check_works_count(models)
     fields.append(works_field)
     fields.append(check_fire_safety(models))
+
+    # ── Batch Submission Procedure (Amendments sheet) checks ──
+    fields.append(check_borrower_vs_folio(models))
+    fields.append(check_all_answered(models))
+    fields.append(_value_rule(models, "submission", "q2_expression_of_interest", "no",
+                              "SS Q2 Expression of Interest = No"))
+    fields.append(_value_rule(models, "submission", "q3_pre_assigned", "yes",
+                              "SS Q3 Pre-Assigned = Yes"))
+    fields.append(_value_rule(models, "questionnaire", "q1_mtr_application", "yes",
+                              "PQ Q1/Q11 MTR Application = Yes"))
+    fields.append(check_manco(models))
+    fields.append(check_pq_signed(models))
+    fields.append(check_sale_price(models))
+    fields.append(check_comparables(models))
+
+    processing_notes.append(
+        "Building Survey & List of Works: address, property type and beds are cross-checked "
+        "here; the remainder of those two documents is reviewed manually by AG & ND."
+    )
 
     # Determine address for result
     sub = models.get("submission")
