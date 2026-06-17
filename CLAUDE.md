@@ -32,6 +32,26 @@ Excel control sheet generated with colour-coded output.
 | Works count | Survey, List of Works | Different count = RED |
 | Fire safety issues | Survey, List of Works | Present but not in submission = RED |
 
+## Batch Submission Procedure checks (Amendments sheet, May 2026)
+In addition to the cross-references above, the reconciler enforces the Batch Submission Procedure:
+
+| Check | Rule | Flag |
+|-------|------|------|
+| Address vs **Eircode Finder** | Address must match the Eircode Finder — verified by geocoding the address and the Eircode (free OpenStreetMap/Nominatim) and checking they're within ~1 km | RED if >1 km apart; AMBER "verify manually" if either won't geocode |
+| **Borrower name vs Folio** | Borrower must match PQ, V *and* the Folio registered owner | RED if ≠ registered owner |
+| **All questions answered** (SS+PQ) | Every question answered or "N/A" | RED if any blank |
+| SS Q2 Expression of Interest | Must be **"No"** | RED if not |
+| SS Q3 Pre-Assigned | Must be **"Yes"** | RED if not |
+| PQ Q1a/b (or Q11) | Must be **"Yes"** | RED if not |
+| **Management Company** (PQ Q8/Q5) | If a ManCo exists, confirm name + annual charge + arrears | RED if present but details missing |
+| **PQ signed & dated** | Must be signed and dated | AMBER until confirmed |
+| **Sale price** (SS Q30) | Added from the MTR Database | AMBER until present |
+| **Valuation comparables** (Q12/Q14) | 3 sale + 3 rental, each matching property type & beds, with let/sold date | RED if <3 of either; AMBER on type/beds/date issues |
+
+Building Survey & List of Works: only address/type/beds are auto-checked — the rest is reviewed manually by AG & ND (noted in the report).
+
+Rule of thumb for new checks: **RED only on a real violation in present data; AMBER ("verify") when a field simply wasn't extracted** — so a clean batch never goes falsely RED.
+
 ## RAG Status definitions
 - **GREEN**: All sources agree (after normalisation)
 - **AMBER**: Minor formatting difference, or field missing from one secondary source
@@ -71,6 +91,12 @@ ANTHROPIC_API_KEY=sk-ant-... uvicorn app.main:app --reload
 
 ## Environment variables
 - `ANTHROPIC_API_KEY` — required, never commit
+- Eircode/address verification (the "Address vs Eircode Finder" check):
+  - **Default: free OpenStreetMap / Nominatim geocoding** — no key needed. Geocodes the address and the Eircode and flags them if >~1 km apart.
+  - `EIRCODE_MATCH_RADIUS_M` — match radius in metres (default `1000`).
+  - `NOMINATIM_EMAIL` — contact email added to Nominatim requests (courtesy; recommended for volume).
+  - `EIRCODE_GEOCODE=0` — disable network geocoding (→ manual-verify flag).
+  - `EIRCODE_API_URL` + `EIRCODE_API_KEY` — optional licensed Eircode endpoint that **overrides** Nominatim (param-name overrides: `EIRCODE_API_KEY_PARAM` default `key`, `EIRCODE_API_EIRCODE_PARAM` default `eircode`).
 
 ## Irish Homes context
 - Properties are in Republic of Ireland

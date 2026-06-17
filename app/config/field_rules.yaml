@@ -106,6 +106,67 @@ fields:
     match_type: exact_normalized
     sources: [questionnaire]
 
+  # ── Batch Submission Procedure (Amendments sheet) ──
+  - name: "Address vs Eircode Finder"
+    priority: CRITICAL
+    match_type: external_lookup
+    sources: [submission, valuation, survey, questionnaire, works]
+    note: "Address MUST match Eircode Finder. Set EIRCODE_API_URL + EIRCODE_API_KEY for a live check; otherwise flagged for manual verification."
+
+  - name: "Borrower Name vs Folio"
+    priority: CRITICAL
+    match_type: fuzzy
+    fuzzy_threshold: 80
+    sources: [submission, questionnaire]  # questionnaire registered_owner = folio name
+    note: "Borrower must match PQ, V and the Folio registered owner (Land Direct)."
+
+  - name: "All Questions Answered (SS+PQ)"
+    priority: HIGH
+    match_type: completeness
+    sources: [submission, questionnaire]
+    note: "Every question answered or explicitly marked 'N/A'."
+
+  - name: "SS Q2 Expression of Interest"
+    priority: HIGH
+    match_type: expected_value
+    expected: "No"
+    sources: [submission]
+
+  - name: "SS Q3 Pre-Assigned"
+    priority: HIGH
+    match_type: expected_value
+    expected: "Yes"
+    sources: [submission]
+
+  - name: "PQ Q1/Q11 MTR Application"
+    priority: HIGH
+    match_type: expected_value
+    expected: "Yes"
+    sources: [questionnaire]
+
+  - name: "Management Company (PQ Q8/Q5)"
+    priority: HIGH
+    match_type: conditional_presence
+    sources: [questionnaire]
+    note: "If a management company exists, confirm name, annual charge and arrears."
+
+  - name: "PQ Signed & Dated"
+    priority: HIGH
+    match_type: presence
+    sources: [questionnaire]
+
+  - name: "Sale Price (SS Q30)"
+    priority: HIGH
+    match_type: presence
+    sources: [submission]
+    note: "Added from the MTR Database."
+
+  - name: "Valuation Comparables"
+    priority: HIGH
+    match_type: comparables
+    sources: [valuation]
+    note: "Q12/Q14: 3 sale + 3 rental, each matching property type & beds, with a let/sold date."
+
 # RAG rules
 rag_rules:
   RED:
