@@ -49,10 +49,15 @@ Return ONLY valid JSON, no markdown.""",
     "valuation": """You extract structured data from Irish property Valuation Reports.
 These are formal valuation documents from registered valuers.
 Extract ALL fields. Return ONLY a JSON object with these exact keys:
-applicant, address, eircode, bedrooms, property_type, open_market_value,
+applicant (the "Applicant Names" — exact, including titles and middle names),
+address, eircode, bedrooms (the number of bedrooms, page 2), property_type, open_market_value,
 rebuilding_cost, rental, floor_area_sqm, inspection_date, valuer, condition,
 letting_demand, folio,
 sale_comparables, rental_comparables.
+property_type: page 1 splits the type into TWO categories that must BOTH be read —
+"Type of Property" (House / Bungalow / Dormer / Purpose built apartment / Duplex) AND
+"Type of Building" (Detached / Semi-Detached / Terraced / End of Terrace). Return the
+ticked option from each, combined, e.g. "Semi-Detached House" or "Detached Bungalow".
 For open_market_value: extract the "Market value (at present)" figure, NOT the rebuilding cost.
 sale_comparables and rental_comparables: look in Q12 (Property Demand) and Q14 (General Notes).
 Each is an array of objects with keys: address, property_type, bedrooms, date (the date the
@@ -69,7 +74,12 @@ Pay special attention to:
 3. The condition rating on the RANKING/SIGNED PAGE (the official rating)
 4. ALL works items listed in the "Minimum Rental Standards Works Required" section
 Return ONLY a JSON object with these exact keys:
-address, prepared_for, folio, property_type, bedrooms, construction_year,
+address (the "Relating to" address on page 1),
+prepared_for, folio,
+property_type (the "Description of Property" on page 2),
+bedrooms (the number of beds on page 3 under "Accommodation" — this is often written
+in prose, e.g. "The property features two bedrooms..."; return just the number/word),
+construction_year,
 condition_rating_executive (from executive summary), condition_rating_actual (from ranking page),
 works_count (integer count of works items), inspection_date, surveyor, 
 fire_safety_issues (description if any, else null),
@@ -79,7 +89,9 @@ Return ONLY valid JSON, no markdown.""",
     "questionnaire": """You extract structured data from Irish MTR Property Questionnaires.
 These are handwritten/typed forms completed by the borrower.
 Return ONLY a JSON object with these exact keys:
-applicant, address, eircode, bedrooms, property_type, total_occupants,
+applicant (Name of Applicant 1 — exact, including any title and middle names),
+applicant_2 (Name of Applicant 2 if present, else null — exact, with titles/middle names),
+address, eircode, bedrooms, property_type, total_occupants,
 adults, dependents, household_composition, registered_owner,
 both_borrowers_mtr, consented_sale, planning_extensions, flooding, pyrite,
 other_interest_party (yes/no), other_interest_name (name if yes, else null),

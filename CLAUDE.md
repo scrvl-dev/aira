@@ -50,6 +50,33 @@ In addition to the cross-references above, the reconciler enforces the Batch Sub
 
 Building Survey & List of Works: only address/type/beds are auto-checked — the rest is reviewed manually by AG & ND (noted in the report).
 
+## Amend / Flag matrix (Amendments tab, 29 Jun 2026 — `app/agents/amendments.py`)
+The **Submission Sheet (SS) is the single source of truth**; every other document is
+checked against it. Default behaviour is to **FLAG discrepancies for human sign-off** —
+sensitive reports are **never silently finalised**. Per document:
+
+| Doc | Rule | Auto-amend? |
+|-----|------|-------------|
+| **Property Questionnaire** | handwritten — **FLAG only**, never amend | No |
+| **Valuation** | tick correct **Type of Property + Type of Building** checkbox; update **bedrooms**. Template untouched. Output a **draft PDF** for sign-off **before** any change | Proposed PDF (sign-off) |
+| **List of Works** | **only the address** is checked | No |
+| **Building Survey** | only **address, property type, bedrooms** | FLAG (prose fields not safely auto-editable) |
+
+Proposed amended PDFs (`app/agents/pdf_amender.py`, PyMuPDF) are generated **on a copy** —
+the original is never modified — stamped with a "PROPOSED — requires sign-off" cover page,
+and offered via `GET /api/proposed/{run_id}/{batch_id}` (a zip). Anything the bot can't
+locate/apply safely (e.g. a checkbox it can't find) stays **FLAGGED**, not silently dropped.
+
+**Property-type map** (canonical attachment families; Cottage & Townhouse excluded — not used):
+`Detached` = Detached House / Detached / Detached Dwelling / Detached Bungalow / Detached Dormer ·
+`Semi-Detached` = Semi-Detached House / Semi-Detached / Semi-Detached Dwelling / Semi-Detached Bungalow ·
+`Terraced` = Terraced / Mid Terrace / Terraced House / Terraced Dwelling ·
+`End of Terrace` = End of Terrace / End Terrace · `Apartment` = Apartment / Purpose built apartment · `Duplex`.
+
+**Bedroom map:** numeric↔word (1 = One, 2 = Two, …). **Names** must match the SS **exactly**,
+including all titles and middle names. Output Excel gains an **"Amendments"** sheet
+(matched ✓ / proposed amendment / flagged for sign-off, with the SS value each should become).
+
 Rule of thumb for new checks: **RED only on a real violation in present data; AMBER ("verify") when a field simply wasn't extracted** — so a clean batch never goes falsely RED.
 
 ## RAG Status definitions

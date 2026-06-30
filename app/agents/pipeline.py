@@ -16,9 +16,16 @@ from app.agents.ocr import pdf_is_scanned, render_pdf_to_images, png_to_base64
 from app.agents.extractor import extract_fields_from_doc, to_typed_models
 from app.agents.clusterer import cluster_documents
 from app.agents.reconciler import reconcile
+from app.agents.pdf_amender import propose_valuation_pdf
+from app.agents.amendments import _get as _amend_get
 from app.schemas.models import (
-    BatchResult, RunResult, UnassignedFile, RAGStatus,
+    BatchResult, RunResult, UnassignedFile, RAGStatus, AmendAction,
 )
+
+# Proposed (draft) amended PDFs generated for human sign-off, keyed by batch_id:
+#   { batch_id: { "Valuation_<file>.pdf": pdf_bytes, ... } }
+# Held in memory only — originals are never modified or written to disk.
+PROPOSED_PDFS: dict[str, dict[str, bytes]] = {}
 
 ProgressCB = Optional[Callable[[str, int, str], None]]
 
@@ -45,7 +52,11 @@ def process_document(filename: str, file_bytes: bytes) -> dict:
     else:
         fields = extract_fields_from_doc(doc_type, text, images=images)
 
-    return {"filename": filename, "doc_type": doc_type, "fields": fields, "ocr_used": ocr_used}
+    # Keep the original PDF bytes so we can render proposed amended copies later
+    # (Valuation / BS). Originals are never modified.
+    is_pdf = Path(filename).suffix.lower() == ".pdf"
+    return {"filename": filename, "doc_type": doc_type, "fields": fields,
+            "ocr_used": ocr_used, "raw_bytes": file_bytes if is_pdf else None}
 
 
 def _best_address(records: list[dict]) -> Optional[str]:
@@ -92,6 +103,35 @@ def _build_batch(cluster: dict, run_id: str, index: int) -> BatchResult:
     result.cluster_confidence = cluster["confidence"]
     result.ocr_docs = ocr_docs
     result.source_files = [r["filename"] for r in records]
+
+    # ── Produce PROPOSED amended PDFs for human sign-off (Valuation only) ──
+    # Only when there is a PROPOSED amendment for the Valuation. Never overwrites
+    # the original; the draft lives in memory under PROPOSED_PDFS[batch_id].
+    val_proposed = [a for a in result.amendments
+                    if a.document == "valuation" and a.action == AmendAction.PROPOSED]
+    if val_proposed:
+        val_rec = next((r for r in records
+                        if r["doc_type"] == "valuation" and r.get("raw_bytes")), None)
+        if val_rec:
+            ss = models.get("submission")
+            pdf_bytes, applied, unapplied = propose_valuation_pdf(
+                val_rec["raw_bytes"], result.amendments,
+                _amend_get(ss, "property_type"), _amend_get(ss, "bedrooms"),
+            )
+            if pdf_bytes:
+                base = Path(val_rec["filename"]).stem
+                name = f"PROPOSED_{base}.pdf"
+                PROPOSED_PDFS.setdefault(batch_id, {})[name] = pdf_bytes
+                result.proposed_pdfs.append(name)
+            # Any change that couldn't be applied stays FLAGGED, not dropped.
+            for note in unapplied:
+                for a in val_proposed:
+                    a.note = (a.note or "") + f" | NOT auto-applied: {note}"
+        else:
+            for a in val_proposed:
+                a.action = AmendAction.FLAG
+                a.auto_applicable = False
+                a.note = (a.note or "") + " | Original Valuation PDF unavailable — FLAG only."
     return result
 
 
@@ -99,6 +139,11 @@ def process_run(file_data: dict[str, bytes], on_progress: ProgressCB = None,
                 run_id: Optional[str] = None) -> RunResult:
     run_id = run_id or str(uuid.uuid4())[:8]
     total = len(file_data)
+
+    # Drop any stale proposed PDFs from a previous run with this id.
+    for k in list(PROPOSED_PDFS):
+        if k.startswith(run_id):
+            PROPOSED_PDFS.pop(k, None)
 
     def progress(stage: str, pct: int, detail: str):
         if on_progress:

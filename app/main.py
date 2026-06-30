@@ -18,14 +18,17 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 
-from app.agents.pipeline import process_run
+import io
+import zipfile
+
+from app.agents.pipeline import process_run, PROPOSED_PDFS
 from app.agents.reporter import generate_excel, generate_combined_excel
 from app.schemas.models import RunResult, BatchResult
 
 
 # ─── App setup ───────────────────────────────────────────────────────────────
 
-APP_VERSION = "2.0.0-batch-submission-procedure"
+APP_VERSION = "3.0.0-amend-flag-signoff"
 
 app = FastAPI(
     title="Irish Homes MTR Batch Review Agent",
@@ -207,6 +210,38 @@ async def download_run_excel(run_id: str):
         None, generate_combined_excel, job["run_obj"]
     )
     return _xlsx_response(data, f"IH_Batch_Review_{run_id}.xlsx")
+
+
+@app.get("/api/proposed/{run_id}/{batch_id}")
+async def download_proposed_pdfs(run_id: str, batch_id: str):
+    """Download the PROPOSED (draft) amended PDFs for one property, as a zip.
+
+    These are NOT finalised — they are drafts produced for a human to sign off
+    before any change is applied. Originals are never modified.
+    """
+    _find_batch(run_id, batch_id)  # validates run/batch exist
+    pdfs = PROPOSED_PDFS.get(batch_id)
+    if not pdfs:
+        raise HTTPException(404, "No proposed amendments for this property")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "READ_ME_sign_off_required.txt",
+            "These PDFs are PROPOSED amendments only. They have NOT been applied "
+            "to the original reports. A reviewer must check and sign off each "
+            "change before it is finalised. The Submission Sheet (SS) is the "
+            "master document.\n",
+        )
+        for name, data in pdfs.items():
+            zf.writestr(name, data)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.read()]),
+        media_type="application/zip",
+        headers={"Content-Disposition":
+                 f'attachment; filename="PROPOSED_amendments_{batch_id}.zip"'},
+    )
 
 
 @app.get("/api/runs")
