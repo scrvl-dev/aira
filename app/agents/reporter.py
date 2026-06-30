@@ -6,7 +6,7 @@ Green/Amber/Red cell fills per field, issues log, works reconciliation.
 import io
 import re
 from datetime import datetime
-from app.schemas.models import BatchResult, RAGStatus, RunResult
+from app.schemas.models import BatchResult, RAGStatus, RunResult, AmendAction
 
 try:
     import openpyxl
@@ -52,6 +52,81 @@ def center() -> Alignment:
 
 def left() -> Alignment:
     return Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+
+# Colours for the amend/flag actions
+_AMEND_COLOURS = {
+    AmendAction.MATCHED:  ("1A4731", "22C55E"),
+    AmendAction.FLAG:     ("451A03", "F59E0B"),
+    AmendAction.PROPOSED: ("0C2A4A", "60A5FA"),
+    AmendAction.MISSING:  ("1C2320", "4A5C54"),
+}
+
+
+def _write_amendments_block(ws, result: BatchResult):
+    """Write the SS-master amend/flag matrix into the given worksheet."""
+    ws.sheet_view.showGridLines = False
+    for col, width in {"A": 16, "B": 34, "C": 26, "D": 26, "E": 12, "F": 30, "G": 44}.items():
+        ws.column_dimensions[col].width = width
+
+    ws.merge_cells("A1:G1")
+    ws["A1"].value = f"AMENDMENTS / SIGN-OFF — {result.address}   (Submission Sheet = master)"
+    ws["A1"].fill = hex_fill("0C0F0E")
+    ws["A1"].font = Font(color="22C55E", bold=True, size=12, name="Courier New")
+    ws["A1"].alignment = center()
+    ws.row_dimensions[1].height = 26
+
+    ws.merge_cells("A2:G2")
+    n_match = sum(1 for a in result.amendments if a.action == AmendAction.MATCHED)
+    n_flag = sum(1 for a in result.amendments if a.action == AmendAction.FLAG)
+    n_prop = sum(1 for a in result.amendments if a.action == AmendAction.PROPOSED)
+    n_miss = sum(1 for a in result.amendments if a.action == AmendAction.MISSING)
+    ws["A2"].value = (f"{n_match} matched ✓   ·   {n_prop} proposed amendment(s) (draft PDF, sign off first)"
+                      f"   ·   {n_flag} flagged for sign-off   ·   {n_miss} unreadable. "
+                      "Nothing is auto-finalised; PQ is handwritten → flag only.")
+    ws["A2"].fill = hex_fill("141918")
+    ws["A2"].font = Font(color="6B7C74", size=9, name="Courier New")
+    ws["A2"].alignment = center()
+
+    headers = ["ACTION", "DOCUMENT · FIELD", "CURRENT VALUE", "SS VALUE (master)",
+               "SIGN-OFF?", "PROPOSED CHANGE", "NOTE"]
+    for col_idx, header in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col_idx, value=header)
+        cell.fill = hex_fill("1C2320")
+        cell.font = Font(color="4A5C54", bold=True, size=8, name="Courier New")
+        cell.alignment = center(); cell.border = thin_border()
+
+    doc_label = {"valuation": "Valuation", "survey": "Building Survey",
+                 "questionnaire": "Questionnaire (handwritten)", "works": "List of Works"}
+    for i, a in enumerate(result.amendments, 4):
+        ws.row_dimensions[i].height = 30
+        bg = "141918" if i % 2 == 0 else "1C2320"
+        fill, fg = _AMEND_COLOURS.get(a.action, ("1C2320", "4A5C54"))
+        vals = [
+            a.action.value,
+            f"{doc_label.get(a.document, a.document)} · {a.field}",
+            a.current_value or "—",
+            a.ss_value or "—",
+            "YES" if a.requires_sign_off else "—",
+            a.proposed_change or "—",
+            a.note or "",
+        ]
+        for col_idx, v in enumerate(vals, 1):
+            cell = ws.cell(row=i, column=col_idx, value=str(v)[:300])
+            cell.border = thin_border()
+            if col_idx == 1:
+                cell.fill = hex_fill(fill); cell.font = Font(color=fg, bold=True, size=9, name="Courier New"); cell.alignment = center()
+            elif col_idx == 5:
+                cell.fill = hex_fill(bg); cell.font = Font(color="F59E0B" if a.requires_sign_off else "6B7C74", bold=True, size=9, name="Courier New"); cell.alignment = center()
+            elif col_idx == 7:
+                cell.fill = hex_fill(bg); cell.font = Font(color="A0B0A8", size=8, name="Courier New", italic=True); cell.alignment = left()
+            else:
+                cell.fill = hex_fill(bg); cell.font = Font(color="E5EDE8" if col_idx == 2 else fg, size=9, name="Courier New"); cell.alignment = left()
+
+    if result.proposed_pdfs:
+        r = len(result.amendments) + 5
+        ws.cell(row=r, column=1, value="DRAFT PDFs for sign-off:").font = Font(color="60A5FA", bold=True, size=9, name="Courier New")
+        ws.cell(row=r, column=2, value=", ".join(result.proposed_pdfs)).font = Font(color="A0B0A8", size=9, name="Courier New")
 
 
 def generate_excel(result: BatchResult) -> bytes:
@@ -188,7 +263,11 @@ def generate_excel(result: BatchResult) -> bytes:
                                 bold=(col_idx == 1))
                 cell.alignment = left()
 
-    # ── Sheet 2: Issues Log ───────────────────────────────────────────────────
+    # ── Sheet 2: Amendments / Sign-off (SS-master matrix) ─────────────────────
+    if result.amendments:
+        _write_amendments_block(wb.create_sheet("Amendments"), result)
+
+    # ── Sheet 3: Issues Log ───────────────────────────────────────────────────
     ws2 = wb.create_sheet("Issues Log")
     ws2.sheet_view.showGridLines = False
     ws2.column_dimensions["A"].width = 10
@@ -411,10 +490,13 @@ def generate_combined_excel(run: RunResult) -> bytes:
             ws.cell(row=row, column=2, value=f"{u.filename}  —  {u.reason}").font = Font(color="A0B0A8", size=8, name="Courier New")
             row += 1
 
-    # ── One control sheet per property ──
+    # ── One control sheet (+ amendments sheet) per property ──
     for b in run.batches:
         sheet_name = _safe_sheet_name(b.address or b.batch_id, used_names)
         _write_control_block(wb.create_sheet(sheet_name), b)
+        if b.amendments:
+            amd_name = _safe_sheet_name((b.address or b.batch_id)[:18] + " · Amend", used_names)
+            _write_amendments_block(wb.create_sheet(amd_name), b)
 
     output = io.BytesIO()
     wb.save(output)

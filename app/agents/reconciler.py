@@ -10,6 +10,10 @@ from app.schemas.models import (
     SubmissionData, ValuationData, SurveyData, QuestionnaireData, WorksData
 )
 from app.agents.eircode_finder import verify_address
+from app.agents.amendments import (
+    property_type_match, bedrooms_match, bedrooms_to_int,
+    canonical_property_type, names_match_exact, build_amendments,
+)
 
 try:
     from rapidfuzz import fuzz
@@ -215,24 +219,38 @@ def check_applicant_name(models: dict) -> FieldResult:
     sur_name = get(models.get("survey"), "prepared_for")
     q_name   = get(models.get("questionnaire"), "applicant")
 
-    # Check if survey "prepared_for" matches borrower name
+    # SS Borrower 1 is the master. Names must match the SS EXACTLY — including
+    # all titles and middle names (per Alex Hromova's authoritative rules). The
+    # old loose fuzzy match is replaced with an exact (normalised) comparison.
     status = RAGStatus.GREEN
     note = None
-
-    names = [n for n in [sub_name, val_name, q_name] if n]
-    if names:
-        base = names[0]
-        if not all(fuzzy_match(base, n, 75) for n in names[1:]):
+    conflicts = []
+    if sub_name:
+        for label, n in (("Valuation", val_name), ("PQ", q_name)):
+            if not n:
+                continue
+            if names_match_exact(sub_name, n) is False:
+                conflicts.append(f"{label}: '{n}'")
+        if conflicts:
+            status = RAGStatus.RED
+            note = (f"Name must match SS exactly (incl. titles & middle names). "
+                    f"SS Borrower 1: '{sub_name}' ≠ " + "; ".join(conflicts))
+    else:
+        # No SS name — fall back to checking the secondaries agree with each other.
+        names = [n for n in [val_name, q_name] if n]
+        if names and not all(names_match_exact(names[0], n) for n in names[1:]):
             status = RAGStatus.RED
             note = f"Name conflict: {', '.join(set(names))}"
+        elif not names:
+            status = RAGStatus.AMBER
 
-    if sur_name and names:
-        if not any(fuzzy_match(sur_name, n, 70) for n in names):
-            status = RAGStatus.RED
-            note = f"Survey prepared for '{sur_name}' but borrower is '{names[0]}'"
-
-    if not names:
-        status = RAGStatus.AMBER
+    # Survey "prepared for" must be the borrower — a clear mismatch (e.g. a
+    # company name) is RED (existing behaviour, preserved).
+    ref_name = sub_name or val_name or q_name
+    if sur_name and ref_name and not fuzzy_match(sur_name, ref_name, 70):
+        status = RAGStatus.RED
+        note = ((note + " | ") if note else "") + \
+            f"Survey prepared for '{sur_name}' but borrower is '{ref_name}'"
 
     return FieldResult(
         field="Applicant Name", priority="CRITICAL",
@@ -272,27 +290,39 @@ def check_folio(models: dict) -> FieldResult:
 
 
 def check_bedrooms(models: dict) -> FieldResult:
-    def get(m, key):
+    def raw(m, key):
         if m is None: return None
-        v = getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
-        n = norm_int(v)
+        return getattr(m, key, None) if not isinstance(m, dict) else m.get(key)
+
+    def show(m, key):
+        # Normalise numeric↔word (per Amendments bedroom map) to an int for display.
+        n = bedrooms_to_int(raw(m, key))
         return str(n) if n is not None else None
 
     beds = {
-        "submission":    get(models.get("submission"), "bedrooms"),
-        "valuation":     get(models.get("valuation"), "bedrooms"),
-        "survey":        get(models.get("survey"), "bedrooms"),
-        "questionnaire": get(models.get("questionnaire"), "bedrooms"),
+        "submission":    show(models.get("submission"), "bedrooms"),
+        "valuation":     show(models.get("valuation"), "bedrooms"),
+        "survey":        show(models.get("survey"), "bedrooms"),
+        "questionnaire": show(models.get("questionnaire"), "bedrooms"),
     }
+    # SS is master: every readable value must equal the SS value (1=One etc).
+    ss = beds["submission"]
     vals = [v for v in beds.values() if v]
-    unique = set(vals)
-    status = RAGStatus.GREEN if len(unique) <= 1 else RAGStatus.RED
+    if ss:
+        mismatches = [k for k in ("valuation", "survey", "questionnaire")
+                      if beds[k] and beds[k] != ss]
+        status = RAGStatus.RED if mismatches else RAGStatus.GREEN
+        note = (f"Differs from SS ({ss}): " +
+                ", ".join(f"{k}={beds[k]}" for k in mismatches)) if mismatches else None
+    else:
+        status = RAGStatus.GREEN if len(set(vals)) <= 1 else RAGStatus.RED
+        note = None if len(set(vals)) <= 1 else "Bedroom counts differ across documents"
 
     return FieldResult(
         field="Number of Bedrooms", priority="CRITICAL",
         submission=beds["submission"], valuation=beds["valuation"],
         survey=beds["survey"], questionnaire=beds["questionnaire"],
-        status=status
+        status=status, note=note
     )
 
 
@@ -309,19 +339,35 @@ def check_property_type(models: dict) -> FieldResult:
         return FieldResult(field="Property Type", priority="HIGH",
                           submission=None, status=RAGStatus.AMBER)
 
-    base = norm_str(vals[0])
-    # Semi-detached variations
-    semi_variants = ["semi", "semi-detached", "semi detached", "semidetached"]
-    all_semi = all(any(sv in norm_str(v) for sv in semi_variants) for v in vals)
-    status = RAGStatus.GREEN if all_semi else (
-        RAGStatus.AMBER if len(set(norm_str(v) for v in vals)) <= 2 else RAGStatus.RED
-    )
+    # Use the authoritative property-type map (Amendments tab). SS is master:
+    # every readable secondary type must map to the same family as the SS.
+    ss_type = types["submission"]
+    note = None
+    if ss_type:
+        ss_key = canonical_property_type(ss_type)
+        mismatches = []
+        for k in ("valuation", "survey", "questionnaire"):
+            if types[k] and property_type_match(ss_type, types[k]) is False:
+                mismatches.append(f"{k}='{types[k]}'")
+        if ss_key is None:
+            status = RAGStatus.AMBER
+            note = (f"SS property type '{ss_type}' not in the equivalence map — "
+                    "verify manually (Cottage/Townhouse are not used).")
+        elif mismatches:
+            status = RAGStatus.RED
+            note = (f"Differs from SS ({ss_type} = {ss_key}): " + ", ".join(mismatches))
+        else:
+            status = RAGStatus.GREEN
+    else:
+        keys = {canonical_property_type(v) for v in vals}
+        keys.discard(None)
+        status = RAGStatus.GREEN if len(keys) <= 1 else RAGStatus.RED
 
     return FieldResult(
         field="Property Type", priority="HIGH",
         submission=types["submission"], valuation=types["valuation"],
         survey=types["survey"], questionnaire=types["questionnaire"],
-        status=status
+        status=status, note=note
     )
 
 
@@ -834,6 +880,17 @@ def reconcile(models: dict, property_ref: str = "Unknown") -> BatchResult:
         "here; the remainder of those two documents is reviewed manually by AG & ND."
     )
 
+    # ── SS-master amend/flag matrix (Amendments sheet, 29 Jun 2026) ──
+    amendments = build_amendments(models)
+    n_flag = sum(1 for a in amendments if a.action.value == "FLAG")
+    n_prop = sum(1 for a in amendments if a.action.value == "PROPOSED")
+    if amendments:
+        processing_notes.append(
+            f"Amend/flag matrix: {n_prop} proposed amendment(s) (Valuation checkboxes/beds — "
+            f"draft PDF for sign-off), {n_flag} discrepancy(ies) flagged for human sign-off. "
+            "PQ is handwritten → flag-only; nothing is auto-finalised."
+        )
+
     # Determine address for result
     sub = models.get("submission")
     address = (getattr(sub, "address", None) if not isinstance(sub, dict)
@@ -859,5 +916,6 @@ def reconcile(models: dict, property_ref: str = "Unknown") -> BatchResult:
         issues=issues,
         works_reconciliation=work_items,
         doc_summary=doc_summary,
-        processing_notes=processing_notes
+        processing_notes=processing_notes,
+        amendments=amendments,
     )

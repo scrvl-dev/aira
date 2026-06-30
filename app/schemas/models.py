@@ -10,6 +10,33 @@ class RAGStatus(str, Enum):
     MISSING = "MISSING"
 
 
+class AmendAction(str, Enum):
+    """Outcome of the SS-master field-matching matrix (Amendments sheet)."""
+    MATCHED = "MATCHED"          # ✓ already matches the Submission Sheet
+    FLAG = "FLAG"                # discrepancy — flag for human sign-off, do NOT auto-edit
+    PROPOSED = "PROPOSED"        # a proposed amendment PDF was produced for sign-off
+    MISSING = "MISSING"          # value couldn't be read / document absent
+
+
+class Amendment(BaseModel):
+    """One field on one document checked against the Submission Sheet (the master).
+
+    Default behaviour is to FLAG. A PROPOSED action means the bot generated a
+    *draft* amended PDF (checkbox ticked / value updated) for a human to sign off
+    BEFORE anything is finalised — the original is never overwritten.
+    """
+    document: str                       # valuation / survey / questionnaire / works
+    field: str                          # e.g. "Property Type", "Number of Bedrooms"
+    current_value: Optional[str] = None  # what the document currently says
+    ss_value: Optional[str] = None       # the Submission Sheet value it should become
+    action: AmendAction = AmendAction.FLAG
+    note: Optional[str] = None
+    # When a proposed amendment was produced programmatically:
+    proposed_change: Optional[str] = None  # human-readable "tick Semi-Detached; set beds=3"
+    auto_applicable: bool = False          # could the bot safely apply it to a PDF?
+    requires_sign_off: bool = True         # ALWAYS true for sensitive reports
+
+
 class FieldResult(BaseModel):
     field: str
     priority: str  # CRITICAL / HIGH / MEDIUM
@@ -115,6 +142,7 @@ class SurveyData(BaseModel):
 
 class QuestionnaireData(BaseModel):
     applicant: Optional[str] = None
+    applicant_2: Optional[str] = None
     address: Optional[str] = None
     eircode: Optional[str] = None
     bedrooms: Optional[str] = None
@@ -163,6 +191,10 @@ class BatchResult(BaseModel):
     works_reconciliation: List[WorkItem]
     doc_summary: dict
     processing_notes: List[str] = Field(default_factory=list)
+    # ── SS-master amend/flag matrix (Amendments sheet) ──
+    amendments: List[Amendment] = Field(default_factory=list)
+    # filenames of proposed (draft) amended PDFs generated for human sign-off
+    proposed_pdfs: List[str] = Field(default_factory=list)
     # ── Multi-batch / run context ──
     batch_id: str = ""
     doc_completeness: str = ""        # e.g. "4/5"

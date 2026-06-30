@@ -13,7 +13,10 @@ def test_generate_excel_produces_valid_workbook(clean_models):
     assert len(data) > 0
 
     wb = openpyxl.load_workbook(io.BytesIO(data))
-    assert wb.sheetnames == ["Control Sheet", "Issues Log", "Works Reconciliation"]
+    # An "Amendments" sheet (SS-master amend/flag matrix) is included whenever the
+    # batch has any amendment checks (i.e. a Submission Sheet is present).
+    assert wb.sheetnames == ["Control Sheet", "Amendments", "Issues Log", "Works Reconciliation"]
+    assert "Amendments" in wb.sheetnames
 
 
 def test_control_sheet_lists_all_fields(clean_models):

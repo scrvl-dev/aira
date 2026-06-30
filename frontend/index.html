@@ -288,6 +288,7 @@
       <button class="dl-btn" id="dlBtn" onclick="downloadBatch()" style="margin-bottom:18px">⬇ Download This Property's Control Sheet</button>
       <div class="tabs" role="tablist">
         <button class="tab active" role="tab" onclick="switchTab('fields',this)">Field Reconciliation</button>
+        <button class="tab" role="tab" onclick="switchTab('amend',this)">Amend / Flag</button>
         <button class="tab" role="tab" onclick="switchTab('issues',this)">Issues Log</button>
         <button class="tab" role="tab" onclick="switchTab('works',this)">Works</button>
       </div>
@@ -302,6 +303,10 @@
           </div>
           <div id="fieldsBody"></div>
         </div>
+      </div>
+      <div class="tab-panel" id="tab-amend">
+        <button class="dl-btn" id="dlProposedBtn" onclick="downloadProposed()" style="display:none;margin-bottom:14px">⬇ Download proposed amended PDF(s) for sign-off</button>
+        <div id="amendBody"></div>
       </div>
       <div class="tab-panel" id="tab-issues"><div id="issuesBody"></div></div>
       <div class="tab-panel" id="tab-works"><div id="worksBody"></div></div>
@@ -528,7 +533,25 @@
       ? b.works_reconciliation.map(w => `<div class="work-row"><span class="work-num">#${String(w.number).padStart(2,'0')}</span><span class="work-desc">${escapeHtml(w.description)}</span><span class="work-flag ${w.in_survey?'yes':'no'}">${w.in_survey?'✓':'✗'} Survey</span><span class="work-flag ${w.in_works?'yes':'no'}">${w.in_works?'✓':'✗'} Works</span><span class="rag-pill rag-${w.status}" style="padding:4px 9px">${w.status}</span></div>`).join('')
       : '<div class="empty-msg">No works data available</div>';
 
+    const amendments = b.amendments || [];
+    const ACT_COLOUR = {MATCHED:'var(--green)', FLAG:'var(--amber)', PROPOSED:'#60A5FA', MISSING:'var(--dim)'};
+    const DOC_LABEL = {valuation:'Valuation', survey:'Building Survey', questionnaire:'Questionnaire (handwritten)', works:'List of Works'};
+    document.getElementById('amendBody').innerHTML = amendments.length
+      ? `<div class="empty-msg" style="text-align:left;margin-bottom:10px">Submission Sheet (SS) is the master. Nothing is auto-finalised — proposed amendments are drafts for human sign-off.</div>` +
+        amendments.map(a => `<div class="issue-item ${a.action==='FLAG'?'AMBER':(a.action==='MATCHED'?'GREEN':'RED')}">
+          <div class="issue-title"><span style="color:${ACT_COLOUR[a.action]||'var(--text)'};font-weight:700">${a.action}</span> · ${escapeHtml(DOC_LABEL[a.document]||a.document)} · ${escapeHtml(a.field)}${a.requires_sign_off?' <span class="verify-dot" title="Requires human sign-off">SIGN-OFF</span>':''}</div>
+          <div class="issue-desc">Current: <b>${escapeHtml(a.current_value||'—')}</b> &nbsp;→&nbsp; SS: <b>${escapeHtml(a.ss_value||'—')}</b>${a.proposed_change?` &nbsp;·&nbsp; Proposed: <b>${escapeHtml(a.proposed_change)}</b>`:''}</div>
+          <div class="issue-src">${escapeHtml(a.note||'')}</div></div>`).join('')
+      : '<div class="empty-msg">No amend/flag checks for this property.</div>';
+    const propBtn = document.getElementById('dlProposedBtn');
+    propBtn.style.display = (b.proposed_pdfs && b.proposed_pdfs.length) ? 'inline-flex' : 'none';
+
     document.querySelectorAll('.tab')[0].click();
+  }
+
+  function downloadProposed() {
+    if (currentRunId && currentBatchId)
+      dl(`/api/proposed/${currentRunId}/${currentBatchId}`, `PROPOSED_amendments_${currentBatchId}.zip`);
   }
 
   function showError(msg) {
